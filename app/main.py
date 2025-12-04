@@ -1,4 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, Response, make_response
+from flask_httpauth import HTTPBasicAuth
+from werkzeug.security import check_password_hash
 from app.database import init_db, get_db
 import os
 import csv
@@ -13,6 +15,21 @@ from datetime import datetime
 app = Flask(__name__)
 app.config['DATABASE'] = os.environ.get('DATABASE_PATH', '/app/data/rapporte.db')
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+# HTTP Basic Auth Setup
+auth = HTTPBasicAuth()
+
+# Benutzer und Passwörter (Passwort-Hashes)
+# Generiere Hash mit: from werkzeug.security import generate_password_hash; print(generate_password_hash('dein_passwort'))
+users = {
+    os.environ.get('AUTH_USERNAME', 'admin'): os.environ.get('AUTH_PASSWORD_HASH', 'scrypt:32768:8:1$4xQJ5Z8LGFqPHYmH$c8e0c3d8a5f5e9c8b0f1e3d7a9c6b4f2e1d8a7b5c3f0e2d9a8b6c4f1e3d7a9c5b2f0e1d8a7b6c3f2e0d9a8b5c4f1e3d7')
+}
+
+@auth.verify_password
+def verify_password(username, password):
+    if username in users and check_password_hash(users.get(username), password):
+        return username
+    return None
 
 # Initialisiere Datenbank beim Start
 with app.app_context():
@@ -34,6 +51,7 @@ def format_date_ch(date_str):
 app.jinja_env.filters['date_ch'] = format_date_ch
 
 @app.route('/')
+@auth.login_required
 def index():
     """Hauptseite mit Übersicht der letzten Rapporte mit Filter"""
     db = get_db()
@@ -83,6 +101,7 @@ def index():
                                 'bis_datum': bis_datum, 'bezahlt': bezahlt_filter})
 
 @app.route('/kunden')
+@auth.login_required
 def kunden_liste():
     """Liste aller Kunden"""
     db = get_db()
@@ -90,6 +109,7 @@ def kunden_liste():
     return render_template('kunden.html', kunden=kunden)
 
 @app.route('/kunden/neu', methods=['GET', 'POST'])
+@auth.login_required
 def kunde_neu():
     """Neuen Kunden erfassen"""
     if request.method == 'POST':
@@ -107,6 +127,7 @@ def kunde_neu():
 
 
 @app.route('/rapporte/neu', methods=['GET', 'POST'])
+@auth.login_required
 def rapport_neu():
     """Neuen Rapport erfassen"""
     if request.method == 'POST':
@@ -136,6 +157,7 @@ def rapport_neu():
     return render_template('rapport_form.html', kunden=kunden)
 
 @app.route('/rapporte/<int:rapport_id>/bearbeiten', methods=['GET', 'POST'])
+@auth.login_required
 def rapport_bearbeiten(rapport_id):
     """Rapport bearbeiten"""
     db = get_db()
@@ -164,6 +186,7 @@ def rapport_bearbeiten(rapport_id):
     return render_template('rapport_form.html', rapport=rapport, kunden=kunden, edit_mode=True)
 
 @app.route('/kunden/<int:kunde_id>')
+@auth.login_required
 def kunde_detail(kunde_id):
     """Kundendetails mit Login-Daten und Rapporten"""
     db = get_db()
@@ -173,6 +196,7 @@ def kunde_detail(kunde_id):
     return render_template('kunde_detail.html', kunde=kunde, logins=logins, rapporte=rapporte)
 
 @app.route('/kunden/<int:kunde_id>/bearbeiten', methods=['GET', 'POST'])
+@auth.login_required
 def kunde_bearbeiten(kunde_id):
     """Kunde bearbeiten"""
     db = get_db()
@@ -191,6 +215,7 @@ def kunde_bearbeiten(kunde_id):
     return render_template('kunde_form.html', kunde=kunde, edit_mode=True)
 
 @app.route('/login-daten/<int:kunde_id>/neu', methods=['GET', 'POST'])
+@auth.login_required
 def login_neu(kunde_id):
     """Neue Login-Daten für Kunde erfassen"""
     if request.method == 'POST':
@@ -209,6 +234,7 @@ def login_neu(kunde_id):
     return render_template('login_form.html', kunde=kunde)
 
 @app.route('/export/csv')
+@auth.login_required
 def export_csv():
     """Exportiere gefilterte Rapporte als CSV"""
     db = get_db()
@@ -263,6 +289,7 @@ def export_csv():
     return response
 
 @app.route('/export/pdf')
+@auth.login_required
 def export_pdf():
     """Exportiere gefilterte Rapporte als PDF"""
     db = get_db()

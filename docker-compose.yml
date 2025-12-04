@@ -9,4 +9,6 @@ services:
       - ./data:/app/data
     environment:
       - DATABASE_PATH=/app/data/rapporte.db
+      - AUTH_USERNAME=admin
+      - AUTH_PASSWORD_HASH=scrypt:32768:8:1$YourHashHere
     restart: unless-stopped
