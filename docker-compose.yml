@@ -10,7 +10,7 @@ services:
     environment:
       - DATABASE_PATH=/app/data/rapporte.db
       - AUTH_USERNAME=admin
-      - AUTH_PASSWORD_HASH=scrypt:32768:8:1$YourHashHere
+      - AUTH_PASSWORD_HASH=scrypt:32768:8:1$1ZbWMCGxr3LojhYP$3cc2935de4a34892a957b8c5a1a884e0198f5a75da822e4cce95fccfcdcbd8638bf0850030663577249b5756eb641c1cf69e18abee389f46a868181b32e9c179
     restart: unless-stopped
     networks:
       - dieti-it_app
