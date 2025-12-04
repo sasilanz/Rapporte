@@ -15,5 +15,6 @@ RUN mkdir -p /app/data
 # Exponiere Port
 EXPOSE 8085
 
-# Starte die App
-CMD ["python", "-m", "flask", "--app", "app.main", "run", "--host=0.0.0.0", "--port=8085"]
+# Starte die App im Debug-Modus
+ENV FLASK_DEBUG=1
+CMD ["python", "-m", "flask", "--app", "app.main", "run", "--host=0.0.0.0", "--port=8085", "--debug"]

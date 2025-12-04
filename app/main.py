@@ -12,6 +12,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 app.config['DATABASE'] = os.environ.get('DATABASE_PATH', '/app/data/rapporte.db')
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 # Initialisiere Datenbank beim Start
 with app.app_context():
@@ -21,11 +22,14 @@ def format_date_ch(date_str):
     """Konvertiert Datum zu CH-Format (DD.MM.YYYY)"""
     if not date_str:
         return ''
-    try:
-        dt = datetime.strptime(date_str, '%Y-%m-%d')
-        return dt.strftime('%d.%m.%Y')
-    except:
-        return date_str
+    # Konvertiere zu String falls nötig
+    date_str = str(date_str)
+    # Format: YYYY-MM-DD -> DD.MM.YYYY
+    if '-' in date_str and len(date_str) >= 10:
+        parts = date_str[:10].split('-')
+        if len(parts) == 3:
+            return f"{parts[2]}.{parts[1]}.{parts[0]}"
+    return date_str
 
 app.jinja_env.filters['date_ch'] = format_date_ch
 
@@ -63,7 +67,18 @@ def index():
     rapporte = db.execute(query, params).fetchall()
     kunden = db.execute('SELECT id, name FROM kunden ORDER BY name').fetchall()
     
-    return render_template('index.html', rapporte=rapporte, kunden=kunden,
+    # Formatiere Datum im Python-Code
+    rapporte_formatted = []
+    for r in rapporte:
+        r_dict = {}
+        for key in r.keys():
+            if key == 'datum':
+                r_dict[key] = format_date_ch(r[key])  # Überschreibe datum mit formatiertem Wert
+            else:
+                r_dict[key] = r[key]
+        rapporte_formatted.append(r_dict)
+    
+    return render_template('index.html', rapporte=rapporte_formatted, kunden=kunden,
                          filters={'kunde_id': kunde_id, 'von_datum': von_datum, 
                                 'bis_datum': bis_datum, 'bezahlt': bezahlt_filter})
 
@@ -119,6 +134,34 @@ def rapport_neu():
     db = get_db()
     kunden = db.execute('SELECT id, name, stundensatz FROM kunden ORDER BY name').fetchall()
     return render_template('rapport_form.html', kunden=kunden)
+
+@app.route('/rapporte/<int:rapport_id>/bearbeiten', methods=['GET', 'POST'])
+def rapport_bearbeiten(rapport_id):
+    """Rapport bearbeiten"""
+    db = get_db()
+    
+    if request.method == 'POST':
+        # Berechne Kosten automatisch wenn nicht angegeben
+        kosten = request.form.get('kosten')
+        if not kosten or kosten == '':
+            kunde_id = request.form['kunde_id']
+            dauer_minuten = int(request.form['dauer'])
+            kunde = db.execute('SELECT stundensatz FROM kunden WHERE id = ?', (kunde_id,)).fetchone()
+            stundensatz = kunde['stundensatz'] if kunde else 120.0
+            kosten = round((dauer_minuten / 60.0) * stundensatz, 2)
+        
+        db.execute(
+            'UPDATE rapporte SET kunde_id=?, datum=?, dauer_minuten=?, thema=?, kosten=?, bezahlt=?, zahlungsart=? WHERE id=?',
+            (request.form['kunde_id'], request.form['datum'], request.form['dauer'],
+             request.form['thema'], kosten,
+             'bezahlt' in request.form, request.form.get('zahlungsart', ''), rapport_id)
+        )
+        db.commit()
+        return redirect(url_for('index'))
+    
+    rapport = db.execute('SELECT * FROM rapporte WHERE id = ?', (rapport_id,)).fetchone()
+    kunden = db.execute('SELECT id, name, stundensatz FROM kunden ORDER BY name').fetchall()
+    return render_template('rapport_form.html', rapport=rapport, kunden=kunden, edit_mode=True)
 
 @app.route('/kunden/<int:kunde_id>')
 def kunde_detail(kunde_id):

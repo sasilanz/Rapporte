@@ -1,49 +1,49 @@
 {% extends "base.html" %}
 
-{% block title %}Neuer Rapport{% endblock %}
+{% block title %}{% if edit_mode %}Rapport bearbeiten{% else %}Neuer Rapport{% endif %}{% endblock %}
 
 {% block content %}
 <div class="card">
-    <h2>Neuer Rapport</h2>
+    <h2>{% if edit_mode %}Rapport bearbeiten{% else %}Neuer Rapport{% endif %}</h2>
     <form method="POST">
         <div class="form-group">
             <label for="kunde_id">Kunde *</label>
             <select id="kunde_id" name="kunde_id" required>
                 <option value="">-- Kunde auswählen --</option>
                 {% for kunde in kunden %}
-                <option value="{{ kunde.id }}">{{ kunde.name }}</option>
+                <option value="{{ kunde.id }}" {% if rapport and rapport.kunde_id == kunde.id %}selected{% endif %}>{{ kunde.name }}</option>
                 {% endfor %}
             </select>
         </div>
         <div class="form-group">
             <label for="datum">Datum *</label>
-            <input type="date" id="datum" name="datum" required>
+            <input type="date" id="datum" name="datum" value="{{ rapport.datum if rapport else '' }}" required>
         </div>
         <div class="form-group">
             <label for="dauer">Dauer (Minuten) *</label>
-            <input type="number" id="dauer" name="dauer" min="1" required>
+            <input type="number" id="dauer" name="dauer" min="1" value="{{ rapport.dauer_minuten if rapport else '' }}" required>
         </div>
         <div class="form-group">
             <label for="thema">Thema / Beschreibung *</label>
-            <textarea id="thema" name="thema" required></textarea>
+            <textarea id="thema" name="thema" required>{{ rapport.thema if rapport else '' }}</textarea>
         </div>
         <div class="form-group">
             <label for="kosten">Kosten (CHF) <small style="color: #666;">(leer lassen für automatische Berechnung)</small></label>
-            <input type="number" id="kosten" name="kosten" step="0.01" min="0" placeholder="Automatisch berechnen">
+            <input type="number" id="kosten" name="kosten" step="0.01" min="0" value="{{ rapport.kosten if rapport else '' }}" placeholder="Automatisch berechnen">
         </div>
         <div class="form-group">
             <label>
-                <input type="checkbox" name="bezahlt" id="bezahlt" onchange="toggleZahlungsart()">
+                <input type="checkbox" name="bezahlt" id="bezahlt" onchange="toggleZahlungsart()" {% if rapport and rapport.bezahlt %}checked{% endif %}>
                 Bereits bezahlt
             </label>
         </div>
-        <div class="form-group" id="zahlungsart-group" style="display: none;">
+        <div class="form-group" id="zahlungsart-group" style="display: {% if rapport and rapport.bezahlt %}block{% else %}none{% endif %};">
             <label for="zahlungsart">Zahlungsart</label>
             <select id="zahlungsart" name="zahlungsart">
-                <option value="Bar">Bar</option>
-                <option value="Rechnung">Rechnung</option>
-                <option value="Twint">Twint</option>
-                <option value="Überweisung">Überweisung</option>
+                <option value="Bar" {% if rapport and rapport.zahlungsart == 'Bar' %}selected{% endif %}>Bar</option>
+                <option value="Rechnung" {% if rapport and rapport.zahlungsart == 'Rechnung' %}selected{% endif %}>Rechnung</option>
+                <option value="Twint" {% if rapport and rapport.zahlungsart == 'Twint' %}selected{% endif %}>Twint</option>
+                <option value="Überweisung" {% if rapport and rapport.zahlungsart == 'Überweisung' %}selected{% endif %}>Überweisung</option>
             </select>
         </div>
         <button type="submit" class="btn btn-success">Speichern</button>
@@ -57,7 +57,9 @@ function toggleZahlungsart() {
     const zahlungsartGroup = document.getElementById('zahlungsart-group');
     zahlungsartGroup.style.display = bezahlt ? 'block' : 'none';
 }
-// Setze heutiges Datum als Standard
-document.getElementById('datum').valueAsDate = new Date();
+// Setze heutiges Datum als Standard (nur bei neuem Rapport)
+if (!document.getElementById('datum').value) {
+    document.getElementById('datum').valueAsDate = new Date();
+}
 </script>
 {% endblock %}

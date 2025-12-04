@@ -57,12 +57,13 @@
                 <th>Dauer</th>
                 <th>Kosten</th>
                 <th>Status</th>
+                <th>Aktion</th>
             </tr>
         </thead>
         <tbody>
             {% for rapport in rapporte %}
             <tr>
-                <td>{{ rapport.datum|date_ch }}</td>
+                <td>{{ rapport.datum }}</td>
                 <td><a href="/kunden/{{ rapport.kunde_id }}">{{ rapport.kunde_name }}</a></td>
                 <td>{{ rapport.thema }}</td>
                 <td>{{ rapport.dauer_minuten }} min</td>
@@ -73,6 +74,9 @@
                     {% else %}
                         ⏳ Offen
                     {% endif %}
+                </td>
+                <td>
+                    <a href="/rapporte/{{ rapport.id }}/bearbeiten" style="text-decoration: none;">✏️</a>
                 </td>
             </tr>
             {% endfor %}
