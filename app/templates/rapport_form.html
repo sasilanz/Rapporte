@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Neuer Rapport{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Neuer Rapport</h2>
+    <form method="POST">
+        <div class="form-group">
+            <label for="kunde_id">Kunde *</label>
+            <select id="kunde_id" name="kunde_id" required>
+                <option value="">-- Kunde auswählen --</option>
+                {% for kunde in kunden %}
+                <option value="{{ kunde.id }}">{{ kunde.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="datum">Datum *</label>
+            <input type="date" id="datum" name="datum" required>
+        </div>
+        <div class="form-group">
+            <label for="dauer">Dauer (Minuten) *</label>
+            <input type="number" id="dauer" name="dauer" min="1" required>
+        </div>
+        <div class="form-group">
+            <label for="thema">Thema / Beschreibung *</label>
+            <textarea id="thema" name="thema" required></textarea>
+        </div>
+        <div class="form-group">
+            <label for="kosten">Kosten (CHF) <small style="color: #666;">(leer lassen für automatische Berechnung)</small></label>
+            <input type="number" id="kosten" name="kosten" step="0.01" min="0" placeholder="Automatisch berechnen">
+        </div>
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="bezahlt" id="bezahlt" onchange="toggleZahlungsart()">
+                Bereits bezahlt
+            </label>
+        </div>
+        <div class="form-group" id="zahlungsart-group" style="display: none;">
+            <label for="zahlungsart">Zahlungsart</label>
+            <select id="zahlungsart" name="zahlungsart">
+                <option value="Bar">Bar</option>
+                <option value="Rechnung">Rechnung</option>
+                <option value="Twint">Twint</option>
+                <option value="Überweisung">Überweisung</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-success">Speichern</button>
+        <a href="/" class="btn">Abbrechen</a>
+    </form>
+</div>
+
+<script>
+function toggleZahlungsart() {
+    const bezahlt = document.getElementById('bezahlt').checked;
+    const zahlungsartGroup = document.getElementById('zahlungsart-group');
+    zahlungsartGroup.style.display = bezahlt ? 'block' : 'none';
+}
+// Setze heutiges Datum als Standard
+document.getElementById('datum').valueAsDate = new Date();
+</script>
+{% endblock %}

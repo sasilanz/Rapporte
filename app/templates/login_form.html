@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Neue Login-Daten - {{ kunde.name }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Neue Login-Daten für {{ kunde.name }}</h2>
+    <form method="POST">
+        <div class="form-group">
+            <label for="geraet_typ">Gerätetyp *</label>
+            <select id="geraet_typ" name="geraet_typ" required>
+                <option value="">-- Typ auswählen --</option>
+                <option value="Computer">Computer</option>
+                <option value="Router">Router</option>
+                <option value="Drucker">Drucker</option>
+                <option value="NAS">NAS</option>
+                <option value="Server">Server</option>
+                <option value="Smartphone">Smartphone</option>
+                <option value="Tablet">Tablet</option>
+                <option value="Sonstiges">Sonstiges</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="beschreibung">Beschreibung / Modell</label>
+            <input type="text" id="beschreibung" name="beschreibung" placeholder="z.B. MacBook Pro 2021, FRITZ!Box 7590">
+        </div>
+        <div class="form-group">
+            <label for="username">Username / Benutzername</label>
+            <input type="text" id="username" name="username">
+        </div>
+        <div class="form-group">
+            <label for="passwort">Passwort</label>
+            <input type="text" id="passwort" name="passwort">
+        </div>
+        <button type="submit" class="btn btn-success">Speichern</button>
+        <a href="/kunden/{{ kunde.id }}" class="btn">Abbrechen</a>
+    </form>
+</div>
+{% endblock %}

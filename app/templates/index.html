@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}Rapporte - Übersicht{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Rapporte Übersicht</h2>
+    <a href="/rapporte/neu" class="btn btn-success">➕ Neuer Rapport</a>
+    
+    <!-- Filter -->
+    <form method="GET" style="margin-top: 1.5rem; padding: 1rem; background: #f8f9fa; border-radius: 4px;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="kunde_id">Kunde</label>
+                <select id="kunde_id" name="kunde_id">
+                    <option value="">-- Alle Kunden --</option>
+                    {% for kunde in kunden %}
+                    <option value="{{ kunde.id }}" {% if filters.kunde_id == kunde.id|string %}selected{% endif %}>{{ kunde.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="von_datum">Von Datum</label>
+                <input type="date" id="von_datum" name="von_datum" value="{{ filters.von_datum }}">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="bis_datum">Bis Datum</label>
+                <input type="date" id="bis_datum" name="bis_datum" value="{{ filters.bis_datum }}">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="bezahlt">Status</label>
+                <select id="bezahlt" name="bezahlt">
+                    <option value="">-- Alle --</option>
+                    <option value="1" {% if filters.bezahlt == '1' %}selected{% endif %}>Bezahlt</option>
+                    <option value="0" {% if filters.bezahlt == '0' %}selected{% endif %}>Offen</option>
+                </select>
+            </div>
+        </div>
+        <div style="margin-top: 1rem;">
+            <button type="submit" class="btn">🔍 Filtern</button>
+            <a href="/" class="btn">✖ Zurücksetzen</a>
+            {% if rapporte %}
+            <a href="/export/csv?{{ request.query_string.decode() }}" class="btn" style="background: #27ae60;">📄 CSV Export</a>
+            <a href="/export/pdf?{{ request.query_string.decode() }}" class="btn" style="background: #e74c3c;">📕 PDF Export</a>
+            {% endif %}
+        </div>
+    </form>
+    
+    {% if rapporte %}
+    <p style="margin-top: 1rem; color: #666;"><strong>{{ rapporte|length }}</strong> Rapporte gefunden</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Datum</th>
+                <th>Kunde</th>
+                <th>Thema</th>
+                <th>Dauer</th>
+                <th>Kosten</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rapport in rapporte %}
+            <tr>
+                <td>{{ rapport.datum|date_ch }}</td>
+                <td><a href="/kunden/{{ rapport.kunde_id }}">{{ rapport.kunde_name }}</a></td>
+                <td>{{ rapport.thema }}</td>
+                <td>{{ rapport.dauer_minuten }} min</td>
+                <td>CHF {{ "%.2f"|format(rapport.kosten or 0) }}</td>
+                <td>
+                    {% if rapport.bezahlt %}
+                        ✅ Bezahlt ({{ rapport.zahlungsart }})
+                    {% else %}
+                        ⏳ Offen
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="margin-top: 1rem; color: #666;">Noch keine Rapporte erfasst.</p>
+    {% endif %}
+</div>
+{% endblock %}

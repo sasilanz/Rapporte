@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}{{ kunde.name }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>{{ kunde.name }}</h2>
+    <a href="/kunden/{{ kunde.id }}/bearbeiten" class="btn" style="margin-bottom: 1rem;">✏️ Bearbeiten</a>
+    <p><strong>Email:</strong> {{ kunde.email or '-' }}</p>
+    <p><strong>Telefon:</strong> {{ kunde.telefon or '-' }}</p>
+    <p><strong>Adresse:</strong> {{ kunde.adresse or '-' }}</p>
+    <p><strong>IT-Infrastruktur:</strong> {{ kunde.it_infrastruktur or '-' }}</p>
+    <p><strong>Stundensatz:</strong> CHF {{ "%.2f"|format(kunde.stundensatz or 120.0) }}/h</p>
+</div>
+
+<div class="card">
+    <h3>Login-Daten</h3>
+    <a href="/login-daten/{{ kunde.id }}/neu" class="btn btn-success">➕ Neue Login-Daten</a>
+    
+    {% if logins %}
+    <table>
+        <thead>
+            <tr>
+                <th>Gerätetyp</th>
+                <th>Beschreibung</th>
+                <th>Username</th>
+                <th>Passwort</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for login in logins %}
+            <tr>
+                <td>{{ login.geraet_typ }}</td>
+                <td>{{ login.beschreibung or '-' }}</td>
+                <td>{{ login.username or '-' }}</td>
+                <td>{{ login.passwort or '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="margin-top: 1rem; color: #666;">Keine Login-Daten erfasst.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Rapporte</h3>
+    {% if rapporte %}
+    <table>
+        <thead>
+            <tr>
+                <th>Datum</th>
+                <th>Thema</th>
+                <th>Dauer</th>
+                <th>Kosten</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rapport in rapporte %}
+            <tr>
+                <td>{{ rapport.datum|date_ch }}</td>
+                <td>{{ rapport.thema }}</td>
+                <td>{{ rapport.dauer_minuten }} min</td>
+                <td>CHF {{ "%.2f"|format(rapport.kosten or 0) }}</td>
+                <td>
+                    {% if rapport.bezahlt %}
+                        ✅ Bezahlt ({{ rapport.zahlungsart }})
+                    {% else %}
+                        ⏳ Offen
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="margin-top: 1rem; color: #666;">Keine Rapporte für diesen Kunden.</p>
+    {% endif %}
+</div>
+
+<a href="/kunden" class="btn">Zurück zur Kundenliste</a>
+{% endblock %}

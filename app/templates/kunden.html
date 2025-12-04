@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Kunden{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Kunden</h2>
+    <a href="/kunden/neu" class="btn btn-success">➕ Neuer Kunde</a>
+    
+    {% if kunden %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Telefon</th>
+                <th>IT-Infrastruktur</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for kunde in kunden %}
+            <tr onclick="window.location='/kunden/{{ kunde.id }}'" style="cursor: pointer;">
+                <td><strong>{{ kunde.name }}</strong></td>
+                <td>{{ kunde.email or '-' }}</td>
+                <td>{{ kunde.telefon or '-' }}</td>
+                <td>{{ kunde.it_infrastruktur or '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="margin-top: 1rem; color: #666;">Noch keine Kunden erfasst.</p>
+    {% endif %}
+</div>
+{% endblock %}
