@@ -12,3 +12,9 @@ services:
       - AUTH_USERNAME=admin
       - AUTH_PASSWORD_HASH=scrypt:32768:8:1$YourHashHere
     restart: unless-stopped
+    networks:
+      - dieti-it_app
+
+networks:
+  dieti-it_app:
+    external: true
