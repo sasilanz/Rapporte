@@ -6,6 +6,9 @@
 <div class="card">
     <h2>{{ kunde.name }}</h2>
     <a href="/kunden/{{ kunde.id }}/bearbeiten" class="btn" style="margin-bottom: 1rem;">✏️ Bearbeiten</a>
+    <form action="/kunden/{{ kunde.id }}/loeschen" method="POST" style="display: inline;">
+        <button type="submit" class="btn btn-danger" onclick="return confirm('Kunde und alle zugehörigen Login-Daten und Rapporte wirklich löschen?')">🗑️ Löschen</button>
+    </form>
     <p><strong>Email:</strong> {{ kunde.email or '-' }}</p>
     <p><strong>Telefon:</strong> {{ kunde.telefon or '-' }}</p>
     <p><strong>Adresse:</strong> {{ kunde.adresse or '-' }}</p>
@@ -35,7 +38,12 @@
                 <td>{{ login.beschreibung or '-' }}</td>
                 <td>{{ login.username or '-' }}</td>
                 <td>{{ login.passwort or '-' }}</td>
-                <td><a href="/login-daten/{{ login.id }}/bearbeiten" class="btn btn-small">✏️</a></td>
+                <td>
+                    <a href="/login-daten/{{ login.id }}/bearbeiten" class="btn btn-small">✏️</a>
+                    <form action="/login-daten/{{ login.id }}/loeschen" method="POST" style="display: inline;">
+                        <button type="submit" class="btn btn-small btn-danger" onclick="return confirm('Login-Daten wirklich löschen?')">🗑️</button>
+                    </form>
+                </td>
             </tr>
             {% endfor %}
         </tbody>

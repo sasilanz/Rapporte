@@ -253,6 +253,29 @@ def login_bearbeiten(login_id):
     kunde = db.execute('SELECT * FROM kunden WHERE id = ?', (login['kunde_id'],)).fetchone()
     return render_template('login_form.html', kunde=kunde, login=login, edit_mode=True)
 
+@app.route('/login-daten/<int:login_id>/loeschen', methods=['POST'])
+@auth.login_required
+def login_loeschen(login_id):
+    """Login-Daten löschen"""
+    db = get_db()
+    login = db.execute('SELECT kunde_id FROM login_daten WHERE id = ?', (login_id,)).fetchone()
+    kunde_id = login['kunde_id']
+    db.execute('DELETE FROM login_daten WHERE id = ?', (login_id,))
+    db.commit()
+    return redirect(url_for('kunde_detail', kunde_id=kunde_id))
+
+@app.route('/kunden/<int:kunde_id>/loeschen', methods=['POST'])
+@auth.login_required
+def kunde_loeschen(kunde_id):
+    """Kunde und alle zugehörigen Daten löschen"""
+    db = get_db()
+    # Lösche zuerst abhängige Daten
+    db.execute('DELETE FROM login_daten WHERE kunde_id = ?', (kunde_id,))
+    db.execute('DELETE FROM rapporte WHERE kunde_id = ?', (kunde_id,))
+    db.execute('DELETE FROM kunden WHERE id = ?', (kunde_id,))
+    db.commit()
+    return redirect(url_for('kunden_liste'))
+
 @app.route('/export/csv')
 @auth.login_required
 def export_csv():
