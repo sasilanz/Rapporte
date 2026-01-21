@@ -25,6 +25,7 @@
                 <th>Beschreibung</th>
                 <th>Username</th>
                 <th>Passwort</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -34,6 +35,7 @@
                 <td>{{ login.beschreibung or '-' }}</td>
                 <td>{{ login.username or '-' }}</td>
                 <td>{{ login.passwort or '-' }}</td>
+                <td><a href="/login-daten/{{ login.id }}/bearbeiten" class="btn btn-small">✏️</a></td>
             </tr>
             {% endfor %}
         </tbody>

@@ -228,10 +228,30 @@ def login_neu(kunde_id):
         )
         db.commit()
         return redirect(url_for('kunde_detail', kunde_id=kunde_id))
-    
+
     db = get_db()
     kunde = db.execute('SELECT * FROM kunden WHERE id = ?', (kunde_id,)).fetchone()
     return render_template('login_form.html', kunde=kunde)
+
+@app.route('/login-daten/<int:login_id>/bearbeiten', methods=['GET', 'POST'])
+@auth.login_required
+def login_bearbeiten(login_id):
+    """Login-Daten bearbeiten"""
+    db = get_db()
+
+    if request.method == 'POST':
+        db.execute(
+            'UPDATE login_daten SET geraet_typ=?, beschreibung=?, username=?, passwort=? WHERE id=?',
+            (request.form['geraet_typ'], request.form['beschreibung'],
+             request.form['username'], request.form['passwort'], login_id)
+        )
+        db.commit()
+        login = db.execute('SELECT kunde_id FROM login_daten WHERE id = ?', (login_id,)).fetchone()
+        return redirect(url_for('kunde_detail', kunde_id=login['kunde_id']))
+
+    login = db.execute('SELECT * FROM login_daten WHERE id = ?', (login_id,)).fetchone()
+    kunde = db.execute('SELECT * FROM kunden WHERE id = ?', (login['kunde_id'],)).fetchone()
+    return render_template('login_form.html', kunde=kunde, login=login, edit_mode=True)
 
 @app.route('/export/csv')
 @auth.login_required
