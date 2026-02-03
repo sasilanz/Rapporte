@@ -218,22 +218,31 @@ def erstelle_rechnung_pdf(rapport, kunde, rechnungs_nummer):
     elements.append(table)
     elements.append(Spacer(1, 1*cm))
 
-    # === ZAHLUNGSBEDINGUNGEN ===
-    elements.append(Paragraph('Zahlbar innert 30 Tagen', styles['Normal']))
-    elements.append(Spacer(1, 1*cm))
+    # === ZAHLUNGSSTATUS ===
+    if rapport['bezahlt']:
+        # Rechnung bereits bezahlt - Zeige Bezahlt-Vermerk
+        elements.append(Paragraph('<b style="color:green;">✓ BEZAHLT</b>', styles['Heading2']))
+        if rapport['zahlungsart']:
+            elements.append(Paragraph(f'Zahlungsart: {rapport["zahlungsart"]}', styles['Normal']))
+        elements.append(Spacer(1, 0.5*cm))
+        elements.append(Paragraph('Vielen Dank für Ihr Vertrauen!', styles['Normal']))
+    else:
+        # Rechnung offen - Zeige Zahlungsbedingungen und QR-Code
+        elements.append(Paragraph('Zahlbar innert 30 Tagen', styles['Normal']))
+        elements.append(Spacer(1, 1*cm))
 
-    # === QR BILL ===
-    try:
-        qr_drawing = generiere_qr_rechnung(rapport['kosten'], kunde, rechnungs_nummer)
-        if qr_drawing:
-            # Skaliere auf passende Grösse
-            qr_drawing.width = 17*cm
-            qr_drawing.height = 10.5*cm
-            qr_drawing.scale(1, 1)
-            elements.append(qr_drawing)
-    except Exception as e:
-        error_text = f'<b style="color:red">FEHLER:</b> QR-Rechnung konnte nicht generiert werden: {str(e)}'
-        elements.append(Paragraph(error_text, styles['Normal']))
+        # === QR BILL ===
+        try:
+            qr_drawing = generiere_qr_rechnung(rapport['kosten'], kunde, rechnungs_nummer)
+            if qr_drawing:
+                # Skaliere auf passende Grösse
+                qr_drawing.width = 17*cm
+                qr_drawing.height = 10.5*cm
+                qr_drawing.scale(1, 1)
+                elements.append(qr_drawing)
+        except Exception as e:
+            error_text = f'<b style="color:red">FEHLER:</b> QR-Rechnung konnte nicht generiert werden: {str(e)}'
+            elements.append(Paragraph(error_text, styles['Normal']))
 
     # PDF erstellen
     doc.build(elements)
