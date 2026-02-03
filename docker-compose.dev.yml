@@ -1,0 +1,12 @@
+# Development Overrides
+# Verwendung: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  rapporte-app:
+    # Override: Default network statt externes dieti-it
+    networks: []
+
+# Override: Lokales Netzwerk für Dev (nicht external)
+networks:
+  dieti-it:
+    external: false

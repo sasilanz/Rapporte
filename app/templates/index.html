@@ -58,6 +58,7 @@
                 <th>Kosten</th>
                 <th>Status</th>
                 <th>Aktion</th>
+                <th>Rechnung</th>
             </tr>
         </thead>
         <tbody>
@@ -77,6 +78,11 @@
                 </td>
                 <td>
                     <a href="/rapporte/{{ rapport.id }}/bearbeiten" style="text-decoration: none;">✏️</a>
+                </td>
+                <td>
+                    <a href="/rechnung/rapport/{{ rapport.id }}" class="btn" style="font-size: 0.9em; padding: 0.3em 0.6em;">
+                        📄 Rechnung
+                    </a>
                 </td>
             </tr>
             {% endfor %}

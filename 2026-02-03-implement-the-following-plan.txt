@@ -1,0 +1,1539 @@
+
+ ▐▛███▜▌   Claude Code v2.1.27
+▝▜█████▛▘  Sonnet 4.5 · Claude Pro
+  ▘▘ ▝▝    ~/dev/Rapporte
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Plan to implement                                                            │
+│                                                                              │
+│ Implementierungsplan: Swiss QR Bill Rechnungsfunktion                        │
+│                                                                              │
+│ Übersicht                                                                    │
+│                                                                              │
+│ Implementierung einer Rechnungserstellungs-Funktion mit Swiss QR Bill        │
+│ (QR-Rechnung nach ISO 20022) für einzelne Rapporte. Verwendet qrbill         │
+│ Bibliothek mit ReportLab-Integration.                                        │
+│                                                                              │
+│ Entscheidungen (bestätigt)                                                   │
+│                                                                              │
+│ - Rechnungsnummer: RE-YYYYMMDD-XXXXX (z.B. RE-20260203-00001)                │
+│ - Umfang: Einzel-Rapport-Rechnungen (MVP), Multi-Rapport später              │
+│ - Tracking: Neue rechnungen Tabelle für Historie                             │
+│ - MwSt: Keine MwSt-Zeile auf Rechnung                                        │
+│ - QR-Referenz: Ohne QRR, Rechnungsnummer in Mitteilungsfeld                  │
+│ - Adressen: Separate Felder (strasse, hausnummer, plz, stadt) statt Freitext │
+│ - Rapport-Text: thema-Feld wird auf Rechnung als Beschreibung angezeigt      │
+│                                                                              │
+│ Kritische Dateien                                                            │
+│                                                                              │
+│ 1. app/database.py - Neue rechnungen Tabelle hinzufügen                      │
+│ 2. requirements.txt - Dependencies: qrbill==1.2.0, svglib==1.5.1             │
+│ 3. docker-compose.yml - PAYEE_* Environment-Variablen                        │
+│ 4. app/main.py - QR-Bill-Logik, Routen, PDF-Generierung                      │
+│ 5. app/templates/index.html - "Rechnung" Button bei jedem Rapport            │
+│                                                                              │
+│ Implementierungsschritte                                                     │
+│                                                                              │
+│ 0. WICHTIG: Datenbank-Backup erstellen                                       │
+│                                                                              │
+│ LIVE-DATEN! Backup ZUERST erstellen!                                         │
+│                                                                              │
+│ # Backup erstellen (Datum im Dateinamen)                                     │
+│ cp data/rapporte.db data/rapporte_backup_$(date +%Y%m%d_%H%M%S).db           │
+│                                                                              │
+│ # Oder aus Docker-Container:                                                 │
+│ docker cp rapporte-web-1:/app/data/rapporte.db ./rapporte_backup_$(date      │
+│ +%Y%m%d_%H%M%S).db                                                           │
+│                                                                              │
+│ # Backup verifizieren                                                        │
+│ ls -lh data/rapporte_backup_*.db                                             │
+│ # ODER                                                                       │
+│ ls -lh rapporte_backup_*.db                                                  │
+│                                                                              │
+│ Bei Problemen Rollback:                                                      │
+│ # Backup wiederherstellen                                                    │
+│ cp data/rapporte_backup_YYYYMMDD_HHMMSS.db data/rapporte.db                  │
+│ docker-compose restart                                                       │
+│                                                                              │
+│ 1. Dependencies hinzufügen                                                   │
+│                                                                              │
+│ Datei: requirements.txt                                                      │
+│                                                                              │
+│ qrbill==1.2.0                                                                │
+│ svglib==1.5.1                                                                │
+│                                                                              │
+│ 2. Environment-Variablen konfigurieren                                       │
+│                                                                              │
+│ Datei: docker-compose.yml                                                    │
+│                                                                              │
+│ Neue Environment-Variablen hinzufügen:                                       │
+│                                                                              │
+│ - PAYEE_LEGAL_NAME=Ihr Name oder Firmenname                                  │
+│ - PAYEE_IBAN=CH5800791123000889012  # Ihre QR-IBAN                           │
+│ - PAYEE_BANK=Name der Bank                                                   │
+│ - PAYEE_BIC=POFICHBEXXX                                                      │
+│ - PAYEE_DISPLAY_NAME=Ihr Anzeigename                                         │
+│ - PAYEE_ADDRESS_LINE1=Strasse und Hausnummer                                 │
+│ - PAYEE_ADDRESS_LINE2=PLZ und Ort                                            │
+│ - PAYEE_COUNTRY=CH                                                           │
+│                                                                              │
+│ Wichtig: Echte IBAN aus Dietipi-App übernehmen (~/dev/Dietipi-App/.env)      │
+│                                                                              │
+│ 3. Datenbank-Schema erweitern                                                │
+│                                                                              │
+│ Datei: app/database.py                                                       │
+│                                                                              │
+│ 3.1 Kunden-Tabelle: Adressfelder hinzufügen                                  │
+│                                                                              │
+│ Ersetze das kunden CREATE TABLE Statement:                                   │
+│                                                                              │
+│ # Kunden Tabelle                                                             │
+│ db.execute('''                                                               │
+│     CREATE TABLE IF NOT EXISTS kunden (                                      │
+│         id INTEGER PRIMARY KEY AUTOINCREMENT,                                │
+│         name TEXT NOT NULL,                                                  │
+│         email TEXT,                                                          │
+│         telefon TEXT,                                                        │
+│         adresse TEXT,                                                        │
+│         strasse TEXT,                                                        │
+│         hausnummer TEXT,                                                     │
+│         plz TEXT,                                                            │
+│         stadt TEXT,                                                          │
+│         it_infrastruktur TEXT,                                               │
+│         stundensatz REAL DEFAULT 120.0,                                      │
+│         erstellt_am TIMESTAMP DEFAULT CURRENT_TIMESTAMP                      │
+│     )                                                                        │
+│ ''')                                                                         │
+│                                                                              │
+│ Hinweis: adresse Feld bleibt als Fallback bestehen für alte Einträge.        │
+│                                                                              │
+│ 3.2 Neue Tabelle: rechnungen                                                 │
+│                                                                              │
+│ Nach den bestehenden Tabellen hinzufügen:                                    │
+│                                                                              │
+│ # Rechnungen Tabelle                                                         │
+│ db.execute('''                                                               │
+│     CREATE TABLE IF NOT EXISTS rechnungen (                                  │
+│         id INTEGER PRIMARY KEY AUTOINCREMENT,                                │
+│         rechnungs_nummer TEXT UNIQUE NOT NULL,                               │
+│         kunde_id INTEGER NOT NULL,                                           │
+│         erstellt_am TIMESTAMP DEFAULT CURRENT_TIMESTAMP,                     │
+│         betrag REAL NOT NULL,                                                │
+│         rapport_ids TEXT NOT NULL,                                           │
+│         FOREIGN KEY (kunde_id) REFERENCES kunden (id)                        │
+│     )                                                                        │
+│ ''')                                                                         │
+│                                                                              │
+│ 3.3 Datenmigration: Bestehende Adressen aufteilen                            │
+│                                                                              │
+│ Neue Datei erstellen: migrate_adressen.py im Projekt-Root                    │
+│                                                                              │
+│ #!/usr/bin/env python3                                                       │
+│ """                                                                          │
+│ Migriert bestehende Adressen (Freitext) in separate Felder.                  │
+│ Einmalig nach Schema-Update ausführen!                                       │
+│ """                                                                          │
+│ import sqlite3                                                               │
+│ import re                                                                    │
+│                                                                              │
+│ def parse_adresse(adresse_text):                                             │
+│     """Versucht Adresse in Komponenten zu zerlegen"""                        │
+│     if not adresse_text:                                                     │
+│         return None, None, None, None                                        │
+│                                                                              │
+│     lines = [l.strip() for l in adresse_text.strip().split('\n') if          │
+│ l.strip()]                                                                   │
+│                                                                              │
+│     strasse = None                                                           │
+│     hausnummer = None                                                        │
+│     plz = None                                                               │
+│     stadt = None                                                             │
+│                                                                              │
+│     # Erste Zeile: Strasse + Hausnummer                                      │
+│     if len(lines) >= 1:                                                      │
+│         # Trenne Hausnummer am Ende ab (Zahlen oder Zahlen+Buchstabe)        │
+│         match = re.match(r'^(.+?)\s+(\d+[a-zA-Z]?)$', lines[0])              │
+│         if match:                                                            │
+│             strasse = match.group(1).strip()                                 │
+│             hausnummer = match.group(2).strip()                              │
+│         else:                                                                │
+│             strasse = lines[0]                                               │
+│                                                                              │
+│     # Letzte Zeile: PLZ + Stadt                                              │
+│     if len(lines) >= 2:                                                      │
+│         last_line = lines[-1]                                                │
+│         match = re.match(r'^(\d{4})\s+(.+)$', last_line)                     │
+│         if match:                                                            │
+│             plz = match.group(1)                                             │
+│             stadt = match.group(2).strip()                                   │
+│                                                                              │
+│     return strasse, hausnummer, plz, stadt                                   │
+│                                                                              │
+│ def migrate_addresses(db_path='data/rapporte.db'):                           │
+│     """Führt Migration durch"""                                              │
+│     conn = sqlite3.connect(db_path)                                          │
+│     conn.row_factory = sqlite3.Row                                           │
+│     cursor = conn.cursor()                                                   │
+│                                                                              │
+│     # Hole alle Kunden mit adresse                                           │
+│     kunden = cursor.execute('SELECT id, name, adresse FROM                   │
+│ kunden').fetchall()                                                          │
+│                                                                              │
+│     print(f"Migriere {len(kunden)} Kunden...")                               │
+│                                                                              │
+│     for kunde in kunden:                                                     │
+│         if not kunde['adresse']:                                             │
+│             print(f"  Kunde {kunde['id']} ({kunde['name']}): Keine Adresse") │
+│             continue                                                         │
+│                                                                              │
+│         strasse, hausnr, plz, stadt = parse_adresse(kunde['adresse'])        │
+│                                                                              │
+│         print(f"  Kunde {kunde['id']} ({kunde['name']}):")                   │
+│         print(f"    Original: {kunde['adresse']}")                           │
+│         print(f"    Geparst: {strasse} {hausnr}, {plz} {stadt}")             │
+│                                                                              │
+│         # Update                                                             │
+│         cursor.execute('''                                                   │
+│             UPDATE kunden                                                    │
+│             SET strasse=?, hausnummer=?, plz=?, stadt=?                      │
+│             WHERE id=?                                                       │
+│         ''', (strasse, hausnr, plz, stadt, kunde['id']))                     │
+│                                                                              │
+│     conn.commit()                                                            │
+│     conn.close()                                                             │
+│     print("\nMigration abgeschlossen!")                                      │
+│                                                                              │
+│ if __name__ == '__main__':                                                   │
+│     migrate_addresses()                                                      │
+│                                                                              │
+│ Nach Schema-Update ausführen:                                                │
+│ python3 migrate_adressen.py                                                  │
+│                                                                              │
+│ 4. Payment-Konfiguration in app/main.py                                      │
+│                                                                              │
+│ Datei: app/main.py                                                           │
+│                                                                              │
+│ Nach Zeile 26 (users dict) hinzufügen:                                       │
+│                                                                              │
+│ # Payment/Rechnungs-Konfiguration                                            │
+│ PAYEE_CONFIG = {                                                             │
+│     'legal_name': os.environ.get('PAYEE_LEGAL_NAME', ''),                    │
+│     'iban': os.environ.get('PAYEE_IBAN', ''),                                │
+│     'bank': os.environ.get('PAYEE_BANK', ''),                                │
+│     'bic': os.environ.get('PAYEE_BIC', ''),                                  │
+│     'display_name': os.environ.get('PAYEE_DISPLAY_NAME', ''),                │
+│     'address_line1': os.environ.get('PAYEE_ADDRESS_LINE1', ''),              │
+│     'address_line2': os.environ.get('PAYEE_ADDRESS_LINE2', ''),              │
+│     'country': os.environ.get('PAYEE_COUNTRY', 'CH')                         │
+│ }                                                                            │
+│                                                                              │
+│ 5. Imports erweitern                                                         │
+│                                                                              │
+│ Datei: app/main.py (Zeile 1-13)                                              │
+│                                                                              │
+│ Hinzufügen:                                                                  │
+│                                                                              │
+│ from qrbill import QRBill                                                    │
+│ from svglib.svglib import svg2rlg                                            │
+│                                                                              │
+│ 6. Helper-Funktionen implementieren                                          │
+│                                                                              │
+│ Datei: app/main.py (nach format_date_ch Funktion)                            │
+│                                                                              │
+│ 6.1 Rechnungsnummer generieren                                               │
+│                                                                              │
+│ def generiere_rechnungsnummer():                                             │
+│     """Generiert eindeutige Rechnungsnummer im Format RE-YYYYMMDD-XXXXX"""   │
+│     db = get_db()                                                            │
+│     today = datetime.now().strftime("%Y%m%d")                                │
+│                                                                              │
+│     # Zähle Rechnungen von heute                                             │
+│     count = db.execute(                                                      │
+│         "SELECT COUNT(*) as cnt FROM rechnungen WHERE rechnungs_nummer LIKE  │
+│ ?",                                                                          │
+│         (f"RE-{today}-%",)                                                   │
+│     ).fetchone()['cnt']                                                      │
+│                                                                              │
+│     return f"RE-{today}-{count+1:05d}"                                       │
+│                                                                              │
+│ 6.2 QR-Rechnung generieren                                                   │
+│                                                                              │
+│ def generiere_qr_rechnung(betrag, kunde, rechnungs_nummer):                  │
+│     """Generiert Swiss QR Bill als ReportLab Drawing"""                      │
+│                                                                              │
+│     if not PAYEE_CONFIG['iban']:                                             │
+│         raise ValueError("PAYEE_IBAN nicht konfiguriert")                    │
+│                                                                              │
+│     # Nutze strukturierte Adressfelder (neue Struktur)                       │
+│     kunde_strasse = kunde.get('strasse', '') or ''                           │
+│     kunde_hausnummer = kunde.get('hausnummer', '') or ''                     │
+│     kunde_plz = kunde.get('plz', '') or ''                                   │
+│     kunde_stadt = kunde.get('stadt', '') or ''                               │
+│                                                                              │
+│     # Vollständige Strasse für QR Bill                                       │
+│     kunde_strasse_komplett = f"{kunde_strasse} {kunde_hausnummer}".strip()   │
+│ if kunde_strasse else ''                                                     │
+│                                                                              │
+│     # Creditor (Rechnungssteller)                                            │
+│     creditor_plz_ort = PAYEE_CONFIG['address_line2'].split(maxsplit=1)       │
+│     creditor_data = {                                                        │
+│         'name': PAYEE_CONFIG['legal_name'],                                  │
+│         'pcode': creditor_plz_ort[0] if len(creditor_plz_ort) > 0 else       │
+│ '8000',                                                                      │
+│         'city': creditor_plz_ort[1] if len(creditor_plz_ort) > 1 else        │
+│ 'Zürich',                                                                    │
+│         'country': PAYEE_CONFIG['country']                                   │
+│     }                                                                        │
+│                                                                              │
+│     # Debtor (Kunde) - optional                                              │
+│     debtor_data = None                                                       │
+│     if kunde.get('name') and kunde_plz and kunde_stadt:                      │
+│         debtor_data = {                                                      │
+│             'name': kunde['name'],                                           │
+│             'street': kunde_strasse_komplett or None,                        │
+│             'pcode': kunde_plz,                                              │
+│             'city': kunde_stadt,                                             │
+│             'country': 'CH'                                                  │
+│         }                                                                    │
+│                                                                              │
+│     # QR Bill erstellen                                                      │
+│     bill = QRBill(                                                           │
+│         account=PAYEE_CONFIG['iban'],                                        │
+│         creditor=creditor_data,                                              │
+│         amount=f"{betrag:.2f}",                                              │
+│         debtor=debtor_data,                                                  │
+│         additional_information=f"Rechnung Nr. {rechnungs_nummer}"            │
+│     )                                                                        │
+│                                                                              │
+│     # SVG generieren und zu Drawing konvertieren                             │
+│     from tempfile import NamedTemporaryFile                                  │
+│     with NamedTemporaryFile(suffix='.svg', delete=False) as tmp:             │
+│         bill.as_svg(tmp.name)                                                │
+│         drawing = svg2rlg(tmp.name)                                          │
+│                                                                              │
+│     return drawing                                                           │
+│                                                                              │
+│ 6.3 Rechnung-PDF erstellen                                                   │
+│                                                                              │
+│ def erstelle_rechnung_pdf(rapport, kunde, rechnungs_nummer):                 │
+│     """Erstellt vollständige Rechnung mit QR Bill für einen Rapport"""       │
+│                                                                              │
+│     buffer = BytesIO()                                                       │
+│     doc = SimpleDocTemplate(                                                 │
+│         buffer,                                                              │
+│         pagesize=A4,                                                         │
+│         rightMargin=2*cm,                                                    │
+│         leftMargin=2*cm,                                                     │
+│         topMargin=2*cm,                                                      │
+│         bottomMargin=2*cm                                                    │
+│     )                                                                        │
+│     elements = []                                                            │
+│     styles = getSampleStyleSheet()                                           │
+│                                                                              │
+│     # === HEADER / ABSENDER ===                                              │
+│     elements.append(Paragraph(f'<b>{PAYEE_CONFIG["display_name"]}</b>',      │
+│ styles['Title']))                                                            │
+│     elements.append(Paragraph(PAYEE_CONFIG['address_line1'],                 │
+│ styles['Normal']))                                                           │
+│     elements.append(Paragraph(PAYEE_CONFIG['address_line2'],                 │
+│ styles['Normal']))                                                           │
+│     elements.append(Spacer(1, 1*cm))                                         │
+│                                                                              │
+│     # === KUNDE & RECHNUNG INFO ===                                          │
+│     heute = format_date_ch(datetime.now().strftime('%Y-%m-%d'))              │
+│                                                                              │
+│     # Baue Kundenadresse aus strukturierten Feldern                          │
+│     kunde_adresse_zeilen = []                                                │
+│     strasse_komplett = f"{kunde.get('strasse', '')} {kunde.get('hausnummer', │
+│  '')}".strip()                                                               │
+│     if strasse_komplett:                                                     │
+│         kunde_adresse_zeilen.append(strasse_komplett)                        │
+│     plz_stadt = f"{kunde.get('plz', '')} {kunde.get('stadt', '')}".strip()   │
+│     if plz_stadt:                                                            │
+│         kunde_adresse_zeilen.append(plz_stadt)                               │
+│                                                                              │
+│     kunde_info = f"""                                                        │
+│     <b>{kunde['name']}</b><br/>                                              │
+│     {'<br/>'.join(kunde_adresse_zeilen)}                                     │
+│     """                                                                      │
+│     rechnung_info = f"""                                                     │
+│     <b>Datum:</b> {heute}<br/>                                               │
+│     <b>Rechnung Nr.:</b> {rechnungs_nummer}                                  │
+│     """                                                                      │
+│                                                                              │
+│     info_table = Table([                                                     │
+│         [Paragraph(kunde_info, styles['Normal']),                            │
+│          Paragraph(rechnung_info, styles['Normal'])]                         │
+│     ], colWidths=[10*cm, 7*cm])                                              │
+│     elements.append(info_table)                                              │
+│     elements.append(Spacer(1, 1.5*cm))                                       │
+│                                                                              │
+│     # === TITEL ===                                                          │
+│     elements.append(Paragraph('<b>RECHNUNG</b>', styles['Heading2']))        │
+│     elements.append(Spacer(1, 0.5*cm))                                       │
+│                                                                              │
+│     # === POSITIONEN TABELLE ===                                             │
+│     data = [['Pos', 'Datum', 'Beschreibung', 'Dauer', 'Betrag (CHF)']]       │
+│                                                                              │
+│     thema_text = rapport['thema'][:50] + '...' if len(rapport['thema']) > 50 │
+│  else rapport['thema']                                                       │
+│     dauer_std = rapport['dauer_minuten'] / 60                                │
+│                                                                              │
+│     data.append([                                                            │
+│         '1',                                                                 │
+│         format_date_ch(rapport['datum']),                                    │
+│         thema_text,                                                          │
+│         f"{rapport['dauer_minuten']} min",                                   │
+│         f"{rapport['kosten']:.2f}"                                           │
+│     ])                                                                       │
+│                                                                              │
+│     # Total Zeile                                                            │
+│     data.append(['', '', '', '<b>Total CHF:</b>',                            │
+│ f"<b>{rapport['kosten']:.2f}</b>"])                                          │
+│                                                                              │
+│     table = Table(data, colWidths=[1.5*cm, 2.5*cm, 8*cm, 2.5*cm, 2.5*cm])    │
+│     table.setStyle(TableStyle([                                              │
+│         ('BACKGROUND', (0, 0), (-1, 0), colors.grey),                        │
+│         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),                   │
+│         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),                                 │
+│         ('ALIGN', (4, 0), (4, -1), 'RIGHT'),                                 │
+│         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),                     │
+│         ('FONTSIZE', (0, 0), (-1, 0), 10),                                   │
+│         ('BOTTOMPADDING', (0, 0), (-1, 0), 12),                              │
+│         ('GRID', (0, 0), (-1, -2), 1, colors.black),                         │
+│         ('LINEABOVE', (3, -1), (-1, -1), 2, colors.black),                   │
+│     ]))                                                                      │
+│                                                                              │
+│     elements.append(table)                                                   │
+│     elements.append(Spacer(1, 1*cm))                                         │
+│                                                                              │
+│     # === ZAHLUNGSBEDINGUNGEN ===                                            │
+│     elements.append(Paragraph('Zahlbar innert 30 Tagen', styles['Normal']))  │
+│     elements.append(Spacer(1, 1*cm))                                         │
+│                                                                              │
+│     # === QR BILL ===                                                        │
+│     try:                                                                     │
+│         qr_drawing = generiere_qr_rechnung(rapport['kosten'], kunde,         │
+│ rechnungs_nummer)                                                            │
+│         if qr_drawing:                                                       │
+│             # Skaliere auf passende Grösse                                   │
+│             qr_drawing.width = 17*cm                                         │
+│             qr_drawing.height = 10.5*cm                                      │
+│             qr_drawing.scale(1, 1)                                           │
+│             elements.append(qr_drawing)                                      │
+│     except Exception as e:                                                   │
+│         error_text = f'<b style="color:red">FEHLER:</b> QR-Rechnung konnte   │
+│ nicht generiert werden: {str(e)}'                                            │
+│         elements.append(Paragraph(error_text, styles['Normal']))             │
+│                                                                              │
+│     # PDF erstellen                                                          │
+│     doc.build(elements)                                                      │
+│     buffer.seek(0)                                                           │
+│                                                                              │
+│     return buffer.getvalue()                                                 │
+│                                                                              │
+│ 7. Route implementieren                                                      │
+│                                                                              │
+│ Datei: app/main.py (nach bestehenden Routen, vor @app.teardown_appcontext)   │
+│                                                                              │
+│ @app.route('/rechnung/rapport/<int:rapport_id>')                             │
+│ @auth.login_required                                                         │
+│ def rechnung_einzeln(rapport_id):                                            │
+│     """Erstellt Rechnung für einzelnen Rapport"""                            │
+│     db = get_db()                                                            │
+│                                                                              │
+│     # Lade Rapport mit Kundendaten                                           │
+│     row = db.execute('''                                                     │
+│         SELECT r.*, k.name as kunde_name, k.email, k.telefon, k.adresse,     │
+│                k.strasse, k.hausnummer, k.plz, k.stadt,                      │
+│                k.it_infrastruktur, k.stundensatz                             │
+│         FROM rapporte r                                                      │
+│         JOIN kunden k ON r.kunde_id = k.id                                   │
+│         WHERE r.id = ?                                                       │
+│     ''', (rapport_id,)).fetchone()                                           │
+│                                                                              │
+│     if not row:                                                              │
+│         return "Rapport nicht gefunden", 404                                 │
+│                                                                              │
+│     # Konvertiere zu Dicts für einfacheren Zugriff                           │
+│     rapport = {                                                              │
+│         'id': row['id'],                                                     │
+│         'kunde_id': row['kunde_id'],                                         │
+│         'datum': row['datum'],                                               │
+│         'dauer_minuten': row['dauer_minuten'],                               │
+│         'thema': row['thema'],                                               │
+│         'kosten': row['kosten'],                                             │
+│         'bezahlt': row['bezahlt'],                                           │
+│         'zahlungsart': row['zahlungsart']                                    │
+│     }                                                                        │
+│     kunde = {                                                                │
+│         'name': row['kunde_name'],                                           │
+│         'email': row['email'],                                               │
+│         'adresse': row['adresse'],  # Fallback für alte Daten                │
+│         'strasse': row['strasse'],                                           │
+│         'hausnummer': row['hausnummer'],                                     │
+│         'plz': row['plz'],                                                   │
+│         'stadt': row['stadt']                                                │
+│     }                                                                        │
+│                                                                              │
+│     # Validierung                                                            │
+│     if not PAYEE_CONFIG['iban']:                                             │
+│         return "Fehler: IBAN nicht konfiguriert. Bitte PAYEE_IBAN in         │
+│ docker-compose.yml setzen.", 500                                             │
+│                                                                              │
+│     if not rapport['kosten'] or rapport['kosten'] <= 0:                      │
+│         return "Fehler: Rapport hat keinen gültigen Betrag.", 400            │
+│                                                                              │
+│     # Generiere Rechnungsnummer                                              │
+│     rechnungs_nummer = generiere_rechnungsnummer()                           │
+│                                                                              │
+│     # Speichere Rechnung in DB                                               │
+│     db.execute(                                                              │
+│         'INSERT INTO rechnungen (rechnungs_nummer, kunde_id, betrag,         │
+│ rapport_ids) VALUES (?, ?, ?, ?)',                                           │
+│         (rechnungs_nummer, rapport['kunde_id'], rapport['kosten'],           │
+│ str(rapport_id))                                                             │
+│     )                                                                        │
+│     db.commit()                                                              │
+│                                                                              │
+│     # Generiere PDF                                                          │
+│     try:                                                                     │
+│         pdf_bytes = erstelle_rechnung_pdf(rapport, kunde, rechnungs_nummer)  │
+│     except Exception as e:                                                   │
+│         return f"Fehler beim Erstellen der Rechnung: {str(e)}", 500          │
+│                                                                              │
+│     # Rückgabe als Download                                                  │
+│     response = make_response(pdf_bytes)                                      │
+│     response.headers['Content-Type'] = 'application/pdf'                     │
+│     response.headers['Content-Disposition'] = f'attachment;                  │
+│ filename=Rechnung_{rechnungs_nummer}.pdf'                                    │
+│                                                                              │
+│     return response                                                          │
+│                                                                              │
+│ 8. Kunden-Formulare anpassen                                                 │
+│                                                                              │
+│ Datei: app/templates/kunde_form.html                                         │
+│                                                                              │
+│ Ersetze das Adresse-Feld durch separate Felder:                              │
+│                                                                              │
+│ <!-- Statt eines grossen Adresse-Textareas: -->                              │
+│ <div>                                                                        │
+│     <label for="strasse">Strasse:</label>                                    │
+│     <input type="text" id="strasse" name="strasse" value="{{ kunde.strasse   │
+│ if kunde else '' }}">                                                        │
+│ </div>                                                                       │
+│                                                                              │
+│ <div>                                                                        │
+│     <label for="hausnummer">Hausnummer:</label>                              │
+│     <input type="text" id="hausnummer" name="hausnummer" value="{{           │
+│ kunde.hausnummer if kunde else '' }}" style="width: 100px;">                 │
+│ </div>                                                                       │
+│                                                                              │
+│ <div>                                                                        │
+│     <label for="plz">PLZ:</label>                                            │
+│     <input type="text" id="plz" name="plz" value="{{ kunde.plz if kunde else │
+│  '' }}" pattern="[0-9]{4}" style="width: 100px;">                            │
+│ </div>                                                                       │
+│                                                                              │
+│ <div>                                                                        │
+│     <label for="stadt">Stadt:</label>                                        │
+│     <input type="text" id="stadt" name="stadt" value="{{ kunde.stadt if      │
+│ kunde else '' }}">                                                           │
+│ </div>                                                                       │
+│                                                                              │
+│ Datei: app/main.py                                                           │
+│                                                                              │
+│ In den Routen kunde_neu und kunde_bearbeiten die neuen Felder verarbeiten:   │
+│                                                                              │
+│ # In kunde_neu (Zeile ~118-123):                                             │
+│ db.execute(                                                                  │
+│     'INSERT INTO kunden (name, email, telefon, strasse, hausnummer, plz,     │
+│ stadt, it_infrastruktur, stundensatz) '                                      │
+│     'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',                                    │
+│     (request.form['name'], request.form['email'], request.form['telefon'],   │
+│      request.form.get('strasse', ''), request.form.get('hausnummer', ''),    │
+│      request.form.get('plz', ''), request.form.get('stadt', ''),             │
+│      request.form['it_infrastruktur'], request.form.get('stundensatz',       │
+│ 120.0))                                                                      │
+│ )                                                                            │
+│                                                                              │
+│ # In kunde_bearbeiten (Zeile ~205-210):                                      │
+│ db.execute(                                                                  │
+│     'UPDATE kunden SET name=?, email=?, telefon=?, strasse=?, hausnummer=?,  │
+│ plz=?, stadt=?, it_infrastruktur=?, stundensatz=? WHERE id=?',               │
+│     (request.form['name'], request.form['email'], request.form['telefon'],   │
+│      request.form.get('strasse', ''), request.form.get('hausnummer', ''),    │
+│      request.form.get('plz', ''), request.form.get('stadt', ''),             │
+│      request.form['it_infrastruktur'], request.form.get('stundensatz',       │
+│ 120.0), kunde_id)                                                            │
+│ )                                                                            │
+│                                                                              │
+│ 9. UI-Integration: Rechnung-Buttons                                          │
+│                                                                              │
+│ Datei: app/templates/index.html                                              │
+│                                                                              │
+│ In der Rapporte-Tabelle neue Spalte hinzufügen:                              │
+│                                                                              │
+│ 1. Im <thead> nach der letzten <th>:                                         │
+│ <th>Rechnung</th>                                                            │
+│                                                                              │
+│ 2. Im <tbody> nach der letzten <td> (innerhalb der for-Schleife):            │
+│ <td>                                                                         │
+│     <a href="/rechnung/rapport/{{ rapport.id }}" class="btn"                 │
+│ style="font-size: 0.9em; padding: 0.3em 0.6em;">                             │
+│         📄 Rechnung                                                          │
+│     </a>                                                                     │
+│ </td>                                                                        │
+│                                                                              │
+│ Optional: Ähnliche Buttons in kunde_detail.html bei der Rapporte-Liste       │
+│ hinzufügen.                                                                  │
+│                                                                              │
+│ Hinweis: Der Rapport-Text (thema) ist bereits im Plan und wird auf der       │
+│ Rechnung als "Beschreibung" angezeigt (siehe Variable thema_text in          │
+│ erstelle_rechnung_pdf).                                                      │
+│                                                                              │
+│ Verification / Testing                                                       │
+│                                                                              │
+│ Setup testen                                                                 │
+│                                                                              │
+│ # 0. BACKUP ERSTELLT? (siehe Schritt 0 oben!)                                │
+│                                                                              │
+│ # 1. Migration ausführen                                                     │
+│ python3 migrate_adressen.py                                                  │
+│                                                                              │
+│ # 2. Migrierte Daten prüfen                                                  │
+│ docker exec -it rapporte-web-1 sqlite3 /app/data/rapporte.db                 │
+│ sqlite> SELECT id, name, strasse, hausnummer, plz, stadt FROM kunden LIMIT   │
+│ 5;                                                                           │
+│ sqlite> .exit                                                                │
+│                                                                              │
+│ # 3. Container neu bauen                                                     │
+│ docker-compose down                                                          │
+│ docker-compose up --build -d                                                 │
+│                                                                              │
+│ # 4. Logs prüfen                                                             │
+│ docker-compose logs -f web                                                   │
+│                                                                              │
+│ # 5. App öffnen                                                              │
+│ open http://localhost:8085                                                   │
+│                                                                              │
+│ Funktionstest                                                                │
+│                                                                              │
+│ 1. Login: Mit admin/changeme einloggen                                       │
+│ 2. Rapport auswählen: Auf Hauptseite Rapport mit Kosten > 0 wählen           │
+│ 3. Rechnung erstellen: "📄 Rechnung" Button klicken                          │
+│ 4. PDF prüfen:                                                               │
+│   - Wird PDF heruntergeladen?                                                │
+│   - Ist Rechnungsnummer korrekt (RE-YYYYMMDD-XXXXX)?                         │
+│   - Sind Kundendaten sichtbar?                                               │
+│   - Ist QR-Code vorhanden?                                                   │
+│ 5. QR-Code scannen:                                                          │
+│   - Mit Banking-App (UBS, Raiffeisen, PostFinance, etc.) scannen             │
+│   - IBAN, Betrag, Empfänger prüfen                                           │
+│   - Rechnungsnummer in Mitteilung prüfen                                     │
+│ 6. Datenbank prüfen:                                                         │
+│ docker exec -it rapporte-web-1 sqlite3 /app/data/rapporte.db                 │
+│ sqlite> SELECT * FROM rechnungen;                                            │
+│ sqlite> .exit                                                                │
+│                                                                              │
+│ Edge Cases testen                                                            │
+│                                                                              │
+│ - Rapport ohne Kundenadresse (sollte QR-Code ohne Debtor generieren)         │
+│ - Kunde mit alten Daten (nur adresse-Feld, keine neuen Felder) - Fallback    │
+│ funktioniert?                                                                │
+│ - Mehrfache Rechnungen am selben Tag (Sequenznummer erhöht sich?)            │
+│ - Lange Rapport-Beschreibung (thema > 50 Zeichen, Trunkierung funktioniert?) │
+│ - Fehlende IBAN (zeigt Fehler-Meldung?)                                      │
+│ - Neuer Kunde anlegen mit separaten Adressfeldern                            │
+│                                                                              │
+│ Produktion                                                                   │
+│                                                                              │
+│ - Echte IBAN aus Dietipi-App in docker-compose.yml eintragen                 │
+│ - Alle PAYEE_* Variablen mit echten Daten füllen                             │
+│ - Test-Rechnung erstellen und mit Banking-App scannen                        │
+│ - Container neu starten: docker-compose restart                              │
+│                                                                              │
+│ Erweiterungsmöglichkeiten (später)                                           │
+│                                                                              │
+│ Nach erfolgreichem MVP:                                                      │
+│                                                                              │
+│ 1. Multi-Rapport-Rechnungen: Mehrere Rapporte auf einer Rechnung             │
+│ 2. Rechnungs-Liste: /rechnungen Route mit Übersicht aller Rechnungen         │
+│ 3. Nachdrucken: Button zum erneuten Generieren bestehender Rechnungen        │
+│ 4. QRR-Referenzen: Strukturierte Referenznummern für automatischen Abgleich  │
+│ 5. MwSt-Berechnung: Falls MwSt-pflichtig wird                                │
+│ 6. E-Mail-Versand: Rechnung direkt an Kunden mailen                          │
+│ 7. Zahlungs-Tracking: Bezahlt-Status mit Rechnung verknüpfen                 │
+│                                                                              │
+│ Risiken & Mitigations                                                        │
+│ Risiko: QR-Code scannt nicht                                                 │
+│ Mitigation: IBAN-Format validieren; mit mehreren Banking-Apps testen         │
+│ ────────────────────────────────────────                                     │
+│ Risiko: SVG-Konvertierung schlägt fehl                                       │
+│ Mitigation: Try-catch um QR-Generierung; Fehler-Paragraph anzeigen           │
+│ ────────────────────────────────────────                                     │
+│ Risiko: Rechnungsnummer-Kollision                                            │
+│ Mitigation: UNIQUE constraint in DB; Transaktion für INSERT verwenden        │
+│ ────────────────────────────────────────                                     │
+│ Risiko: Fehlende Kundenadresse                                               │
+│ Mitigation: Graceful handling: QR ohne Debtor, Warnung im PDF                │
+│ ────────────────────────────────────────                                     │
+│ Risiko: PDF-Layout bricht                                                    │
+│ Mitigation: Lange Texte trunkieren; A4-Masse einhalten                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+● Ich werde nun die Swiss QR Bill Rechnungsfunktion gemäß dem Plan
+  implementieren. Beginnen wir mit dem KRITISCHEN ersten Schritt: 
+  Datenbank-Backup.
+
+● Bash(cp data/rapporte.db data/rapporte_backup_$(date +%Y%m%d_%H%M%S).db && ls
+      -lh data/rapporte_backup_*.db)
+  ⎿  Error: Exit code 1
+     cp: der Aufruf von stat für 'data/rapporte.db' ist nicht möglich: Datei ode
+      Verzeichnis nicht gefunden
+
+● Die Datei liegt vermutlich im Docker-Container. Lassen Sie mich erst prüfen,
+  ob der Container läuft:
+
+● Bash(docker ps | grep rapporte)
+  ⎿  /bin/bash: Zeile 1: docker: Kommando nicht gefunden
+
+● Docker ist nicht verfügbar. Lassen Sie mich prüfen, ob die Datei lokal
+  existiert:
+
+● Searched for 1 pattern (ctrl+o to expand)
+
+● Die Datenbank existiert noch nicht - das ist in Ordnung für die Entwicklung.
+  Ich beginne mit der Implementierung. Zunächst erstelle ich eine Todo-Liste:
+
+● Perfekt! Jetzt beginne ich mit der Implementierung:
+
+  Task #1: Dependencies hinzufügen
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(requirements.txt)
+  ⎿  Added 2 lines
+      2  Werkzeug==3.0.1
+      3  reportlab==4.0.7
+      4  Flask-HTTPAuth==4.8.0
+      5 +qrbill==1.2.0                                                   
+      6 +svglib==1.5.1                                                   
+
+● Task #2: Datenbank-Schema erweitern
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(app/database.py)
+  ⎿  Added 4 lines
+      23              email TEXT,
+      24              telefon TEXT,
+      25              adresse TEXT,
+      26 +            strasse TEXT,                                      
+      27 +            hausnummer TEXT,                                   
+      28 +            plz TEXT,                                          
+      29 +            stadt TEXT,                                        
+      30              it_infrastruktur TEXT,
+      31              stundensatz REAL DEFAULT 120.0,
+      32              erstellt_am TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+● Update(app/database.py)
+  ⎿  Added 14 lines, removed 1 line
+      62              FOREIGN KEY (kunde_id) REFERENCES kunden (id)
+      63          )
+      64      ''')
+      65 -                                                               
+      65 +                                                               
+      66 +    # Rechnungen Tabelle                                       
+      67 +    db.execute('''                                             
+      68 +        CREATE TABLE IF NOT EXISTS rechnungen (                
+      69 +            id INTEGER PRIMARY KEY AUTOINCREMENT,              
+      70 +            rechnungs_nummer TEXT UNIQUE NOT NULL,             
+      71 +            kunde_id INTEGER NOT NULL,                         
+      72 +            erstellt_am TIMESTAMP DEFAULT CURRENT_TIMESTAMP,   
+      73 +            betrag REAL NOT NULL,                              
+      74 +            rapport_ids TEXT NOT NULL,                         
+      75 +            FOREIGN KEY (kunde_id) REFERENCES kunden (id)      
+      76 +        )                                                      
+      77 +    ''')                                                       
+      78 +                                                               
+      79      db.commit()
+
+● Task #3: Migrations-Script erstellen
+
+● Write(migrate_adressen.py)
+  ⎿  Wrote 76 lines to migrate_adressen.py
+       1 #!/usr/bin/env python3
+       2 """
+       3 Migriert bestehende Adressen (Freitext) in separate Felder.
+       4 Einmalig nach Schema-Update ausführen!
+       5 """
+       6 import sqlite3
+       7 import re
+       8 
+       9 def parse_adresse(adresse_text):
+      10     """Versucht Adresse in Komponenten zu zerlegen"""
+     … +66 lines (ctrl+o to expand)
+
+● Bash(chmod +x /home/asiend/dev/Rapporte/migrate_adressen.py)
+  ⎿  (No content)
+
+● Task #4: Payment-Konfiguration und Imports hinzufügen
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(app/main.py)
+  ⎿  Added 2 lines
+      11  from reportlab.lib.styles import getSampleStyleSheet
+      12  from reportlab.lib.units import cm
+      13  from datetime import datetime
+      14 +from qrbill import QRBill                                      
+      15 +from svglib.svglib import svg2rlg                              
+      16  
+      17  app = Flask(__name__)
+      18  app.config['DATABASE'] = os.environ.get('DATABASE_PATH', '/app/
+          data/rapporte.db')
+
+● Update(app/main.py)
+  ⎿  Added 12 lines
+      27      os.environ.get('AUTH_USERNAME', 'admin'): os.environ.get('A
+          UTH_PASSWORD_HASH', 'scrypt:32768:8:1$4xQJ5Z8LGFqPHYmH$c8e0c3d8
+          a5f5e9c8b0f1e3d7a9c6b4f2e1d8a7b5c3f0e2d9a8b6c4f1e3d7a9c5b2f0e1d
+          8a7b6c3f2e0d9a8b5c4f1e3d7')
+      28  }
+      29  
+      30 +# Payment/Rechnungs-Konfiguration                              
+      31 +PAYEE_CONFIG = {                                               
+      32 +    'legal_name': os.environ.get('PAYEE_LEGAL_NAME', ''),      
+      33 +    'iban': os.environ.get('PAYEE_IBAN', ''),                  
+      34 +    'bank': os.environ.get('PAYEE_BANK', ''),                  
+      35 +    'bic': os.environ.get('PAYEE_BIC', ''),                    
+      36 +    'display_name': os.environ.get('PAYEE_DISPLAY_NAME', ''),  
+      37 +    'address_line1': os.environ.get('PAYEE_ADDRESS_LINE1', ''),
+      38 +    'address_line2': os.environ.get('PAYEE_ADDRESS_LINE2', ''),
+      39 +    'country': os.environ.get('PAYEE_COUNTRY', 'CH')           
+      40 +}                                                              
+      41 +                                                               
+      42  @auth.verify_password
+      43  def verify_password(username, password):
+      44      if username in users and check_password_hash(users.get(user
+          name), password):
+
+● Task #5: Helper-Funktionen implementieren
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(app/main.py)
+  ⎿  Added 174 lines
+       62              return f"{parts[2]}.{parts[1]}.{parts[0]}"
+       63      return date_str
+       64  
+       65 +def generiere_rechnungsnummer():                              
+       66 +    """Generiert eindeutige Rechnungsnummer im Format RE-YYYYM
+          +MDD-XXXXX"""                                                  
+       67 +    db = get_db()                                             
+       68 +    today = datetime.now().strftime("%Y%m%d")                 
+       69 +                                                              
+       70 +    # Zähle Rechnungen von heute                              
+       71 +    count = db.execute(                                       
+       72 +        "SELECT COUNT(*) as cnt FROM rechnungen WHERE rechnung
+          +s_nummer LIKE ?",                                             
+       73 +        (f"RE-{today}-%",)                                    
+       74 +    ).fetchone()['cnt']                                       
+       75 +                                                              
+       76 +    return f"RE-{today}-{count+1:05d}"                        
+       77 +                                                              
+       78 +def generiere_qr_rechnung(betrag, kunde, rechnungs_nummer):   
+       79 +    """Generiert Swiss QR Bill als ReportLab Drawing"""       
+       80 +                                                              
+       81 +    if not PAYEE_CONFIG['iban']:                              
+       82 +        raise ValueError("PAYEE_IBAN nicht konfiguriert")     
+       83 +                                                              
+       84 +    # Nutze strukturierte Adressfelder (neue Struktur)        
+       85 +    kunde_strasse = kunde.get('strasse', '') or ''            
+       86 +    kunde_hausnummer = kunde.get('hausnummer', '') or ''      
+       87 +    kunde_plz = kunde.get('plz', '') or ''                    
+       88 +    kunde_stadt = kunde.get('stadt', '') or ''                
+       89 +                                                              
+       90 +    # Vollständige Strasse für QR Bill                        
+       91 +    kunde_strasse_komplett = f"{kunde_strasse} {kunde_hausnumm
+          +er}".strip() if kunde_strasse else ''                         
+       92 +                                                              
+       93 +    # Creditor (Rechnungssteller)                             
+       94 +    creditor_plz_ort = PAYEE_CONFIG['address_line2'].split(max
+          +split=1)                                                      
+       95 +    creditor_data = {                                         
+       96 +        'name': PAYEE_CONFIG['legal_name'],                   
+       97 +        'pcode': creditor_plz_ort[0] if len(creditor_plz_ort) 
+          +> 0 else '8000',                                              
+       98 +        'city': creditor_plz_ort[1] if len(creditor_plz_ort) >
+          + 1 else 'Zürich',                                             
+       99 +        'country': PAYEE_CONFIG['country']                    
+      100 +    }                                                         
+      101 +                                                              
+      102 +    # Debtor (Kunde) - optional                               
+      103 +    debtor_data = None                                        
+      104 +    if kunde.get('name') and kunde_plz and kunde_stadt:       
+      105 +        debtor_data = {                                       
+      106 +            'name': kunde['name'],                            
+      107 +            'street': kunde_strasse_komplett or None,         
+      108 +            'pcode': kunde_plz,                               
+      109 +            'city': kunde_stadt,                              
+      110 +            'country': 'CH'                                   
+      111 +        }                                                     
+      112 +                                                              
+      113 +    # QR Bill erstellen                                       
+      114 +    bill = QRBill(                                            
+      115 +        account=PAYEE_CONFIG['iban'],                         
+      116 +        creditor=creditor_data,                               
+      117 +        amount=f"{betrag:.2f}",                               
+      118 +        debtor=debtor_data,                                   
+      119 +        additional_information=f"Rechnung Nr. {rechnungs_numme
+          +r}"                                                           
+      120 +    )                                                         
+      121 +                                                              
+      122 +    # SVG generieren und zu Drawing konvertieren              
+      123 +    from tempfile import NamedTemporaryFile                   
+      124 +    with NamedTemporaryFile(suffix='.svg', delete=False) as tm
+          +p:                                                            
+      125 +        bill.as_svg(tmp.name)                                 
+      126 +        drawing = svg2rlg(tmp.name)                           
+      127 +                                                              
+      128 +    return drawing                                            
+      129 +                                                              
+      130 +def erstelle_rechnung_pdf(rapport, kunde, rechnungs_nummer):  
+      131 +    """Erstellt vollständige Rechnung mit QR Bill für einen Ra
+          +pport"""                                                      
+      132 +                                                              
+      133 +    buffer = BytesIO()                                        
+      134 +    doc = SimpleDocTemplate(                                  
+      135 +        buffer,                                               
+      136 +        pagesize=A4,                                          
+      137 +        rightMargin=2*cm,                                     
+      138 +        leftMargin=2*cm,                                      
+      139 +        topMargin=2*cm,                                       
+      140 +        bottomMargin=2*cm                                     
+      141 +    )                                                         
+      142 +    elements = []                                             
+      143 +    styles = getSampleStyleSheet()                            
+      144 +                                                              
+      145 +    # === HEADER / ABSENDER ===                               
+      146 +    elements.append(Paragraph(f'<b>{PAYEE_CONFIG["display_name
+          +"]}</b>', styles['Title']))                                   
+      147 +    elements.append(Paragraph(PAYEE_CONFIG['address_line1'], s
+          +tyles['Normal']))                                             
+      148 +    elements.append(Paragraph(PAYEE_CONFIG['address_line2'], s
+          +tyles['Normal']))                                             
+      149 +    elements.append(Spacer(1, 1*cm))                          
+      150 +                                                              
+      151 +    # === KUNDE & RECHNUNG INFO ===                           
+      152 +    heute = format_date_ch(datetime.now().strftime('%Y-%m-%d')
+          +)                                                             
+      153 +                                                              
+      154 +    # Baue Kundenadresse aus strukturierten Feldern           
+      155 +    kunde_adresse_zeilen = []                                 
+      156 +    strasse_komplett = f"{kunde.get('strasse', '')} {kunde.get
+          +('hausnummer', '')}".strip()                                  
+      157 +    if strasse_komplett:                                      
+      158 +        kunde_adresse_zeilen.append(strasse_komplett)         
+      159 +    plz_stadt = f"{kunde.get('plz', '')} {kunde.get('stadt', '
+          +')}".strip()                                                  
+      160 +    if plz_stadt:                                             
+      161 +        kunde_adresse_zeilen.append(plz_stadt)                
+      162 +                                                              
+      163 +    kunde_info = f"""                                         
+      164 +    <b>{kunde['name']}</b><br/>                               
+      165 +    {'<br/>'.join(kunde_adresse_zeilen)}                      
+      166 +    """                                                       
+      167 +    rechnung_info = f"""                                      
+      168 +    <b>Datum:</b> {heute}<br/>                                
+      169 +    <b>Rechnung Nr.:</b> {rechnungs_nummer}                   
+      170 +    """                                                       
+      171 +                                                              
+      172 +    info_table = Table([                                      
+      173 +        [Paragraph(kunde_info, styles['Normal']),             
+      174 +         Paragraph(rechnung_info, styles['Normal'])]          
+      175 +    ], colWidths=[10*cm, 7*cm])                               
+      176 +    elements.append(info_table)                               
+      177 +    elements.append(Spacer(1, 1.5*cm))                        
+      178 +                                                              
+      179 +    # === TITEL ===                                           
+      180 +    elements.append(Paragraph('<b>RECHNUNG</b>', styles['Headi
+          +ng2']))                                                       
+      181 +    elements.append(Spacer(1, 0.5*cm))                        
+      182 +                                                              
+      183 +    # === POSITIONEN TABELLE ===                              
+      184 +    data = [['Pos', 'Datum', 'Beschreibung', 'Dauer', 'Betrag 
+          +(CHF)']]                                                      
+      185 +                                                              
+      186 +    thema_text = rapport['thema'][:50] + '...' if len(rapport[
+          +'thema']) > 50 else rapport['thema']                          
+      187 +    dauer_std = rapport['dauer_minuten'] / 60                 
+      188 +                                                              
+      189 +    data.append([                                             
+      190 +        '1',                                                  
+      191 +        format_date_ch(rapport['datum']),                     
+      192 +        thema_text,                                           
+      193 +        f"{rapport['dauer_minuten']} min",                    
+      194 +        f"{rapport['kosten']:.2f}"                            
+      195 +    ])                                                        
+      196 +                                                              
+      197 +    # Total Zeile                                             
+      198 +    data.append(['', '', '', '<b>Total CHF:</b>', f"<b>{rappor
+          +t['kosten']:.2f}</b>"])                                       
+      199 +                                                              
+      200 +    table = Table(data, colWidths=[1.5*cm, 2.5*cm, 8*cm, 2.5*c
+          +m, 2.5*cm])                                                   
+      201 +    table.setStyle(TableStyle([                               
+      202 +        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),         
+      203 +        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),    
+      204 +        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),                  
+      205 +        ('ALIGN', (4, 0), (4, -1), 'RIGHT'),                  
+      206 +        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),      
+      207 +        ('FONTSIZE', (0, 0), (-1, 0), 10),                    
+      208 +        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),               
+      209 +        ('GRID', (0, 0), (-1, -2), 1, colors.black),          
+      210 +        ('LINEABOVE', (3, -1), (-1, -1), 2, colors.black),    
+      211 +    ]))                                                       
+      212 +                                                              
+      213 +    elements.append(table)                                    
+      214 +    elements.append(Spacer(1, 1*cm))                          
+      215 +                                                              
+      216 +    # === ZAHLUNGSBEDINGUNGEN ===                             
+      217 +    elements.append(Paragraph('Zahlbar innert 30 Tagen', style
+          +s['Normal']))                                                 
+      218 +    elements.append(Spacer(1, 1*cm))                          
+      219 +                                                              
+      220 +    # === QR BILL ===                                         
+      221 +    try:                                                      
+      222 +        qr_drawing = generiere_qr_rechnung(rapport['kosten'], 
+          +kunde, rechnungs_nummer)                                      
+      223 +        if qr_drawing:                                        
+      224 +            # Skaliere auf passende Grösse                    
+      225 +            qr_drawing.width = 17*cm                          
+      226 +            qr_drawing.height = 10.5*cm                       
+      227 +            qr_drawing.scale(1, 1)                            
+      228 +            elements.append(qr_drawing)                       
+      229 +    except Exception as e:                                    
+      230 +        error_text = f'<b style="color:red">FEHLER:</b> QR-Rec
+          +hnung konnte nicht generiert werden: {str(e)}'                
+      231 +        elements.append(Paragraph(error_text, styles['Normal']
+          +))                                                            
+      232 +                                                              
+      233 +    # PDF erstellen                                           
+      234 +    doc.build(elements)                                       
+      235 +    buffer.seek(0)                                            
+      236 +                                                              
+      237 +    return buffer.getvalue()                                  
+      238 +                                                              
+      239  app.jinja_env.filters['date_ch'] = format_date_ch
+      240  
+      241  @app.route('/')
+
+● Task #6: Rechnung-Route implementieren
+
+● Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(app/main.py)
+  ⎿  Added 70 lines
+      614      response.headers['Content-Disposition'] = f'attachment; fi
+           lename=rapporte_{datetime.now().strftime("%Y%m%d")}.pdf'
+      615      return response
+      616  
+      617 +@app.route('/rechnung/rapport/<int:rapport_id>')              
+      618 +@auth.login_required                                          
+      619 +def rechnung_einzeln(rapport_id):                             
+      620 +    """Erstellt Rechnung für einzelnen Rapport"""             
+      621 +    db = get_db()                                             
+      622 +                                                              
+      623 +    # Lade Rapport mit Kundendaten                            
+      624 +    row = db.execute('''                                      
+      625 +        SELECT r.*, k.name as kunde_name, k.email, k.telefon, 
+          +k.adresse,                                                    
+      626 +               k.strasse, k.hausnummer, k.plz, k.stadt,       
+      627 +               k.it_infrastruktur, k.stundensatz              
+      628 +        FROM rapporte r                                       
+      629 +        JOIN kunden k ON r.kunde_id = k.id                    
+      630 +        WHERE r.id = ?                                        
+      631 +    ''', (rapport_id,)).fetchone()                            
+      632 +                                                              
+      633 +    if not row:                                               
+      634 +        return "Rapport nicht gefunden", 404                  
+      635 +                                                              
+      636 +    # Konvertiere zu Dicts für einfacheren Zugriff            
+      637 +    rapport = {                                               
+      638 +        'id': row['id'],                                      
+      639 +        'kunde_id': row['kunde_id'],                          
+      640 +        'datum': row['datum'],                                
+      641 +        'dauer_minuten': row['dauer_minuten'],                
+      642 +        'thema': row['thema'],                                
+      643 +        'kosten': row['kosten'],                              
+      644 +        'bezahlt': row['bezahlt'],                            
+      645 +        'zahlungsart': row['zahlungsart']                     
+      646 +    }                                                         
+      647 +    kunde = {                                                 
+      648 +        'name': row['kunde_name'],                            
+      649 +        'email': row['email'],                                
+      650 +        'adresse': row['adresse'],  # Fallback für alte Daten 
+      651 +        'strasse': row['strasse'],                            
+      652 +        'hausnummer': row['hausnummer'],                      
+      653 +        'plz': row['plz'],                                    
+      654 +        'stadt': row['stadt']                                 
+      655 +    }                                                         
+      656 +                                                              
+      657 +    # Validierung                                             
+      658 +    if not PAYEE_CONFIG['iban']:                              
+      659 +        return "Fehler: IBAN nicht konfiguriert. Bitte PAYEE_I
+          +BAN in docker-compose.yml setzen.", 500                       
+      660 +                                                              
+      661 +    if not rapport['kosten'] or rapport['kosten'] <= 0:       
+      662 +        return "Fehler: Rapport hat keinen gültigen Betrag.", 
+          +400                                                           
+      663 +                                                              
+      664 +    # Generiere Rechnungsnummer                               
+      665 +    rechnungs_nummer = generiere_rechnungsnummer()            
+      666 +                                                              
+      667 +    # Speichere Rechnung in DB                                
+      668 +    db.execute(                                               
+      669 +        'INSERT INTO rechnungen (rechnungs_nummer, kunde_id, b
+          +etrag, rapport_ids) VALUES (?, ?, ?, ?)',                     
+      670 +        (rechnungs_nummer, rapport['kunde_id'], rapport['koste
+          +n'], str(rapport_id))                                         
+      671 +    )                                                         
+      672 +    db.commit()                                               
+      673 +                                                              
+      674 +    # Generiere PDF                                           
+      675 +    try:                                                      
+      676 +        pdf_bytes = erstelle_rechnung_pdf(rapport, kunde, rech
+          +nungs_nummer)                                                 
+      677 +    except Exception as e:                                    
+      678 +        return f"Fehler beim Erstellen der Rechnung: {str(e)}"
+          +, 500                                                         
+      679 +                                                              
+      680 +    # Rückgabe als Download                                   
+      681 +    response = make_response(pdf_bytes)                       
+      682 +    response.headers['Content-Type'] = 'application/pdf'      
+      683 +    response.headers['Content-Disposition'] = f'attachment; fi
+          +lename=Rechnung_{rechnungs_nummer}.pdf'                       
+      684 +                                                              
+      685 +    return response                                           
+      686 +                                                              
+      687  @app.teardown_appcontext
+      688  def close_connection(exception):
+      689      """Schließe Datenbankverbindung"""
+
+● Task #7: Kunden-Formulare anpassen
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(app/templates/kunde_form.html)
+  ⎿  Added 14 lines, removed 2 lines
+      19              <input type="text" id="telefon" name="telefon" valu
+          e="{{ kunde.telefon if kunde else '' }}">
+      20          </div>
+      21          <div class="form-group">
+      22 -            <label for="adresse">Adresse</label>               
+      23 -            <textarea id="adresse" name="adresse">{{ kunde.adre
+         -sse if kunde else '' }}</textarea>                             
+      22 +            <label for="strasse">Strasse</label>               
+      23 +            <input type="text" id="strasse" name="strasse" valu
+         +e="{{ kunde.strasse if kunde else '' }}">                      
+      24          </div>
+      25          <div class="form-group">
+      26 +            <label for="hausnummer">Hausnummer</label>         
+      27 +            <input type="text" id="hausnummer" name="hausnummer
+         +" value="{{ kunde.hausnummer if kunde else '' }}" style="width:
+         + 150px;">                                                      
+      28 +        </div>                                                 
+      29 +        <div class="form-group">                               
+      30 +            <label for="plz">PLZ</label>                       
+      31 +            <input type="text" id="plz" name="plz" value="{{ ku
+         +nde.plz if kunde else '' }}" pattern="[0-9]{4}" title="4-stelli
+         +ge Postleitzahl" style="width: 150px;">                        
+      32 +        </div>                                                 
+      33 +        <div class="form-group">                               
+      34 +            <label for="stadt">Stadt</label>                   
+      35 +            <input type="text" id="stadt" name="stadt" value="{
+         +{ kunde.stadt if kunde else '' }}">                            
+      36 +        </div>                                                 
+      37 +        <div class="form-group">                               
+      38              <label for="it_infrastruktur">IT-Infrastruktur (Mac
+          OS, Linux, Windows, Drucker, etc.)</label>
+      39              <textarea id="it_infrastruktur" name="it_infrastruk
+          tur">{{ kunde.it_infrastruktur if kunde else '' }}</textarea>
+      40          </div>
+
+● Jetzt passe ich die Routes in main.py an:
+
+● Searched for 1 pattern (ctrl+o to expand)
+
+● Update(app/main.py)
+  ⎿  Added 5 lines, removed 4 lines
+      303      if request.method == 'POST':
+      304          db = get_db()
+      305          db.execute(
+      306 -            'INSERT INTO kunden (name, email, telefon, adresse
+          -, it_infrastruktur, stundensatz) '                            
+      307 -            'VALUES (?, ?, ?, ?, ?, ?)',                      
+      306 +            'INSERT INTO kunden (name, email, telefon, strasse
+          +, hausnummer, plz, stadt, it_infrastruktur, stundensatz) '    
+      307 +            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',             
+      308              (request.form['name'], request.form['email'], requ
+           est.form['telefon'],
+      309 -             request.form['adresse'], request.form['it_infrast
+          -ruktur'],                                                     
+      310 -             request.form.get('stundensatz', 120.0))          
+      309 +             request.form.get('strasse', ''), request.form.get
+          +('hausnummer', ''),                                           
+      310 +             request.form.get('plz', ''), request.form.get('st
+          +adt', ''),                                                    
+      311 +             request.form['it_infrastruktur'], request.form.ge
+          +t('stundensatz', 120.0))                                      
+      312          )
+      313          db.commit()
+      314          return redirect(url_for('kunden_liste'))
+
+● Searched for 2 patterns (ctrl+o to expand)
+
+● Update(app/main.py)
+  ⎿  Added 6 lines, removed 5 lines
+      389  def kunde_bearbeiten(kunde_id):
+      390      """Kunde bearbeiten"""
+      391      db = get_db()
+      392 -                                                              
+      392 +                                                              
+      393      if request.method == 'POST':
+      394          db.execute(
+      395 -            'UPDATE kunden SET name=?, email=?, telefon=?, adr
+          -esse=?, it_infrastruktur=?, stundensatz=? WHERE id=?',        
+      395 +            'UPDATE kunden SET name=?, email=?, telefon=?, str
+          +asse=?, hausnummer=?, plz=?, stadt=?, it_infrastruktur=?, stun
+          +densatz=? WHERE id=?',                                        
+      396              (request.form['name'], request.form['email'], requ
+           est.form['telefon'],
+      397 -             request.form['adresse'], request.form['it_infrast
+          -ruktur'],                                                     
+      398 -             request.form.get('stundensatz', 120.0), kunde_id)
+      397 +             request.form.get('strasse', ''), request.form.get
+          +('hausnummer', ''),                                           
+      398 +             request.form.get('plz', ''), request.form.get('st
+          +adt', ''),                                                    
+      399 +             request.form['it_infrastruktur'], request.form.ge
+          +t('stundensatz', 120.0), kunde_id)                            
+      400          )
+      401          db.commit()
+      402          return redirect(url_for('kunde_detail', kunde_id=kunde
+           _id))
+      402 -                                                              
+      403 +                                                              
+      404      kunde = db.execute('SELECT * FROM kunden WHERE id = ?', (k
+           unde_id,)).fetchone()
+      405      return render_template('kunde_form.html', kunde=kunde, edi
+           t_mode=True)
+      406  
+
+● Task #8: UI-Integration: Rechnung-Buttons hinzufügen
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(app/templates/index.html)
+  ⎿  Added 1 line
+      58                  <th>Kosten</th>
+      59                  <th>Status</th>
+      60                  <th>Aktion</th>
+      61 +                <th>Rechnung</th>                              
+      62              </tr>
+      63          </thead>
+      64          <tbody>
+
+● Update(app/templates/index.html)
+  ⎿  Added 5 lines
+      79                  <td>
+      80                      <a href="/rapporte/{{ rapport.id }}/bearbei
+          ten" style="text-decoration: none;">✏️</a>
+      81                  </td>
+      82 +                <td>                                           
+      83 +                    <a href="/rechnung/rapport/{{ rapport.id }}
+         +" class="btn" style="font-size: 0.9em; padding: 0.3em 0.6em;"> 
+      84 +                        📄 Rechnung                            
+      85 +                    </a>                                       
+      86 +                </td>                                          
+      87              </tr>
+      88              {% endfor %}
+      89          </tbody>
+
+● Task #9: docker-compose.yml Environment-Variablen dokumentieren
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(docker-compose.yml)
+  ⎿  Added 10 lines
+      11        - DATABASE_PATH=/app/data/rapporte.db
+      12        - AUTH_USERNAME=admin
+      13        - AUTH_PASSWORD_HASH=scrypt:32768:8:1$1ZbWMCGxr3LojhYP$3c
+          c2935de4a34892a957b8c5a1a884e0198f5a75da822e4cce95fccfcdcbd8638
+          bf0850030663577249b5756eb641c1cf69e18abee389f46a868181b32e9c179
+      14 +      # QR-Rechnungs-Konfiguration (für Swiss QR Bill)         
+      15 +      # WICHTIG: Ersetzen Sie die Platzhalter mit Ihren echten 
+         +Daten!                                                         
+      16 +      # - PAYEE_LEGAL_NAME=Ihr Name oder Firmenname            
+      17 +      # - PAYEE_IBAN=CH5800791123000889012                     
+      18 +      # - PAYEE_BANK=Name der Bank                             
+      19 +      # - PAYEE_BIC=POFICHBEXXX                                
+      20 +      # - PAYEE_DISPLAY_NAME=Ihr Anzeigename                   
+      21 +      # - PAYEE_ADDRESS_LINE1=Strasse und Hausnummer           
+      22 +      # - PAYEE_ADDRESS_LINE2=PLZ und Ort                      
+      23 +      # - PAYEE_COUNTRY=CH                                     
+      24      restart: unless-stopped
+      25      networks:
+      26        - dieti-it_app
+
+● Perfekt! Alle Tasks sind abgeschlossen. Lassen Sie mich noch eine README für
+  die Implementierung erstellen:
+
+● Write(QR_RECHNUNG_README.md)
+  ⎿  Wrote 152 lines to QR_RECHNUNG_README.md
+       1 # Swiss QR Bill Rechnungsfunktion - Implementierung
+       2 
+       3 ## ✅ Implementierte Features
+       4 
+       5 Die Swiss QR Bill Rechnungsfunktion wurde erfolgreich implementi
+         ert:
+       6 
+       7 1. ✅ **Dependencies hinzugefügt** (`qrbill==1.2.0`, `svglib==1.
+         5.1`)
+       8 2. ✅ **Datenbank-Schema erweitert**:
+       9    - Kunden-Tabelle: Separate Adressfelder (strasse, hausnummer,
+          plz, stadt)
+      10    - Neue `rechnungen` Tabelle für Rechnungs-Tracking
+     … +142 lines (ctrl+o to expand)
+
+● Perfekt! Lassen Sie mich nun eine Zusammenfassung erstellen:
+
+  ✅ Implementierung abgeschlossen!
+
+  Die Swiss QR Bill Rechnungsfunktion wurde erfolgreich implementiert. Hier ist
+  eine Zusammenfassung der durchgeführten Änderungen:
+
+  📦 Implementierte Features
+
+  1. Dependencies hinzugefügt (requirements.txt:5-6)
+    - qrbill==1.2.0 für Swiss QR Bill Generierung
+    - svglib==1.5.1 für SVG-zu-PDF Konvertierung
+  2. Datenbank-Schema erweitert (app/database.py:18-75)
+    - Kunden-Tabelle: Neue Felder strasse, hausnummer, plz, stadt
+    - Neue rechnungen Tabelle für Rechnungs-Tracking mit eindeutiger
+  Rechnungsnummer
+  3. Migrations-Script erstellt (migrate_adressen.py)
+    - Automatisches Parsen bestehender Adressen in separate Felder
+    - Regex-basierte Extraktion von Strasse, Hausnummer, PLZ, Stadt
+  4. QR-Bill Kern-Funktionalität (app/main.py:52-234)
+    - generiere_rechnungsnummer(): RE-YYYYMMDD-XXXXX Format
+    - generiere_qr_rechnung(): Swiss QR Bill mit Creditor/Debtor
+    - erstelle_rechnung_pdf(): Vollständige Rechnung mit QR-Code
+  5. Neue Route (app/main.py:617-693)
+    - /rechnung/rapport/<id> für Einzel-Rapport-Rechnungen
+    - Validierung, DB-Tracking, PDF-Download
+  6. UI-Integration
+    - kunde_form.html:21-30: Separate Adressfelder im Kundenformular
+    - index.html:60,78-82: "📄 Rechnung" Button bei jedem Rapport
+  7. Backend-Anpassungen (app/main.py:299-404)
+    - kunde_neu() und kunde_bearbeiten() für neue Adressfelder
+  8. Dokumentation
+    - docker-compose.yml:14-22: Kommentierte PAYEE_* Environment-Variablen
+    - QR_RECHNUNG_README.md: Vollständige Anleitung für Setup und Testing
+
+  🚀 Nächste Schritte
+
+  Vor dem ersten Deployment:
+
+  1. Dependencies installieren:
+  pip install -r requirements.txt
+  2. Falls bestehende Kundendaten vorhanden: Migration ausführen:
+  python3 migrate_adressen.py
+  3. Environment-Variablen konfigurieren in docker-compose.yml:
+    - PAYEE_LEGAL_NAME (Ihr Name/Firma)
+    - PAYEE_IBAN (Ihre QR-IBAN!)
+    - PAYEE_BANK, PAYEE_BIC
+    - PAYEE_DISPLAY_NAME
+    - PAYEE_ADDRESS_LINE1 (Strasse und Hausnummer)
+    - PAYEE_ADDRESS_LINE2 (PLZ und Ort)
+  4. Container neu bauen:
+  docker-compose down
+  docker-compose up --build -d
+  5. Testen:
+    - Rapport mit Kosten > 0 auswählen
+    - "📄 Rechnung" Button klicken
+    - PDF herunterladen
+    - QR-Code mit Banking-App scannen
+
+  📋 Wichtige Hinweise
+
+  - QR-IBAN erforderlich: Normale IBANs funktionieren nicht für QR-Rechnungen
+  - Das alte adresse-Feld bleibt als Fallback für bestehende Daten
+  - Rechnungsnummern sind eindeutig und werden automatisch sequenziert
+  - Bei fehlendem QR-Code wird eine Fehlermeldung im PDF angezeigt
+  - Das thema-Feld des Rapports wird als Beschreibung auf der Rechnung verwendet
+
+  Alle Details finden Sie in der Datei QR_RECHNUNG_README.md! 🎉
+
+✻ Cooked for 4m 34s
+
+❯ super. danke, ich habe inzwischen docker hier lokal auf dem eos           
+  installiert. die prod-daten sind auf dem raspberry "server". dh ich       
+  müsste die db auf dem prod server extrahieren/backup erstellen und hier   
+  auf dem eos dev importieren. kannst du mich bitte anleiten ?              
+
+● Sehr gerne! Ich leite Sie durch den Prozess, die Produktions-Datenbank vom
+  Raspberry Pi auf Ihren lokalen EOS Dev-Rechner zu übertragen.
+
+  📋 Datenbank-Backup & Import-Anleitung
+
+  Schritt 1: Backup auf dem Raspberry Pi erstellen
+
+  SSH-Verbindung zum Raspberry Pi herstellen und Backup erstellen:
+
+  # SSH zum Raspberry Pi
+  ssh pi@<raspberry-ip>  # oder dietipi@... - je nach Setup
+
+  # Navigiere zum Rapporte-Verzeichnis
+  cd ~/rapporte  # oder wo auch immer Ihr docker-compose.yml liegt
+
+  # Erstelle Backup mit Zeitstempel
+  docker exec rapporte-rapporte-app-1 cat /app/data/rapporte.db >
+  rapporte_backup_$(date +%Y%m%d_%H%M%S).db
+
+  # ODER falls Container anders heißt, erst Namen finden:
+  docker ps | grep rapporte
+  # Dann mit korrektem Container-Namen:
+  docker exec <container-name> cat /app/data/rapporte.db >
+  rapporte_backup_$(date +%Y%m%d_%H%M%S).db
+
+  # Backup verifizieren
+  ls -lh rapporte_backup_*.db
+
+  Schritt 2: Backup vom Raspberry zum EOS kopieren
+
+  Auf Ihrem EOS Dev-Rechner (neues Terminal):
+
+  # Navigiere zu Ihrem lokalen Rapporte-Verzeichnis
+  cd ~/dev/Rapporte
+
+  # Erstelle data-Verzeichnis falls nicht vorhanden
+  mkdir -p data
+
+  # Kopiere Backup vom Raspberry Pi
+  scp pi@<raspberry-ip>:~/rapporte/rapporte_backup_*.db ./data/rapporte.db
+
+  # ODER mit spezifischem Zeitstempel:
+  scp pi@<raspberry-ip>:~/rapporte/rapporte_backup_20260203_143022.db
+  ./data/rapporte.db
+
+  # Backup verifizieren
+  ls -lh data/rapporte.db
+  sqlite3 data/rapporte.db "SELECT COUNT(*) FROM kunden;"
+
+  Schritt 3: Migration durchführen (Adressen aufteilen)
+
+  Wichtig: Erst Migration, dann Docker starten!
+
+  # Noch im Rapporte-Verzeichnis auf EOS
+  # Erstelle lokales Backup (Sicherheitskopie)
+  cp data/rapporte.db data/rapporte_vor_migration_$(date +%Y%m%d_%H%M%S).db
+
+  # Migration ausführen
+  python3 migrate_adressen.py
+
+  # Migrierte Daten prüfen
+  sqlite3 data/rapporte.db "SELECT id, name, strasse, hausnummer, plz, stadt 
+  FROM kunden LIMIT 5;"
+
+  Schritt 4: Lokale Docker-Umgebung starten
+
+  # Dependencies installieren (falls noch nicht geschehen)
+  pip install -r requirements.txt
+
+  # Docker Container bauen und starten
+  docker-compose up --build -d
+
+  # Logs prüfen
+  docker-compose logs -f
+
+  # App öffnen (in anderem Terminal oder Browser)
+  open http://localhost:8085
+  # oder
+  firefox http://localhost:8085
+
+  Schritt 5: Testen
+
+  # Login mit admin/changeme (oder Ihrem konfigurierten Passwort)
+  # Prüfen Sie:
+  # 1. Kundenliste vollständig?
+  # 2. Rapporte vorhanden?
+  # 3. Login-Daten sichtbar?
+
+  🔧 Alternative: Direkte SCP-Kopie mit spezifischem Pfad
+
+  Falls der Container-Name schwierig ist:
+
+  Auf dem Raspberry Pi:
+  # Finde den exakten Pfad
+  docker inspect rapporte-rapporte-app-1 | grep -A 5 "Mounts"
+  # ODER
+  docker volume ls
+  docker volume inspect <volume-name>
+
+  # Kopiere direkt vom Volume-Pfad (meist /var/lib/docker/volumes/...)
+  # ABER einfacher: über docker exec wie oben
+
+  🚨 Troubleshooting
+
+  Problem: Container-Name nicht gefunden
+
+  # Auf Raspberry Pi:
+  docker ps -a | grep rapporte
+  # Nutze den exakten Namen aus der Ausgabe
+
+  Problem: Permission denied beim SCP
+
+  # Auf Raspberry Pi: Backup in Home-Verzeichnis kopieren
+  docker exec rapporte-rapporte-app-1 cat /app/data/rapporte.db >
+  ~/rapporte_backup.db
+  chmod 644 ~/rapporte_backup.db
+
+  # Dann von EOS:
+  scp pi@<raspberry-ip>:~/rapporte_backup.db ./data/rapporte.db
+
+  Problem: Migration-Script findet Datenbank nicht
+
+  # Pfad in migrate_adressen.py anpassen oder als Parameter übergeben:
+  python3 migrate_adressen.py
+  # Das Script nutzt bereits 'data/rapporte.db' als Default
+
+  Problem: Docker Port 8085 bereits belegt
+
+  # Port in docker-compose.yml ändern:
+  # ports:
+  #   - "8086:8085"  # oder anderen freien Port
+
+  📊 Daten-Synchronisation-Workflow
+
+  Für zukünftige Updates:
+
+  # 1. Backup auf Raspberry erstellen
+  ssh pi@<raspberry-ip> "docker exec rapporte-rapporte-app-1 cat 
+  /app/data/rapporte.db" > ./data/rapporte_sync_$(date +%Y%m%d_%H%M%S).db
+
+  # 2. Aktuelles lokales Backup erstellen
+  cp data/rapporte.db data/rapporte_backup_before_sync_$(date +%Y%m%d_%H%M%S).db
+
+  # 3. Neue Daten kopieren
+  cp data/rapporte_sync_*.db data/rapporte.db
+
+  # 4. Container neu starten
+  docker-compose restart
+
+  Möchten Sie, dass ich Ihnen beim Verbindungsaufbau zum Raspberry Pi helfe,
+  oder haben Sie eine spezielle Netzwerk-Konfiguration?
+
+✻ Brewed for 35s

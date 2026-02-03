@@ -19,8 +19,20 @@
             <input type="text" id="telefon" name="telefon" value="{{ kunde.telefon if kunde else '' }}">
         </div>
         <div class="form-group">
-            <label for="adresse">Adresse</label>
-            <textarea id="adresse" name="adresse">{{ kunde.adresse if kunde else '' }}</textarea>
+            <label for="strasse">Strasse</label>
+            <input type="text" id="strasse" name="strasse" value="{{ kunde.strasse if kunde else '' }}">
+        </div>
+        <div class="form-group">
+            <label for="hausnummer">Hausnummer</label>
+            <input type="text" id="hausnummer" name="hausnummer" value="{{ kunde.hausnummer if kunde else '' }}" style="width: 150px;">
+        </div>
+        <div class="form-group">
+            <label for="plz">PLZ</label>
+            <input type="text" id="plz" name="plz" value="{{ kunde.plz if kunde else '' }}" pattern="[0-9]{4}" title="4-stellige Postleitzahl" style="width: 150px;">
+        </div>
+        <div class="form-group">
+            <label for="stadt">Stadt</label>
+            <input type="text" id="stadt" name="stadt" value="{{ kunde.stadt if kunde else '' }}">
         </div>
         <div class="form-group">
             <label for="it_infrastruktur">IT-Infrastruktur (MacOS, Linux, Windows, Drucker, etc.)</label>

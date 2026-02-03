@@ -2,3 +2,5 @@ Flask==3.0.0
 Werkzeug==3.0.1
 reportlab==4.0.7
 Flask-HTTPAuth==4.8.0
+qrbill==1.2.0
+svglib==1.5.1

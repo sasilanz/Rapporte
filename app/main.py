@@ -11,6 +11,8 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from datetime import datetime
+from qrbill import QRBill
+from svglib.svglib import svg2rlg
 
 app = Flask(__name__)
 app.config['DATABASE'] = os.environ.get('DATABASE_PATH', '/app/data/rapporte.db')
@@ -23,6 +25,18 @@ auth = HTTPBasicAuth()
 # Generiere Hash mit: from werkzeug.security import generate_password_hash; print(generate_password_hash('dein_passwort'))
 users = {
     os.environ.get('AUTH_USERNAME', 'admin'): os.environ.get('AUTH_PASSWORD_HASH', 'scrypt:32768:8:1$4xQJ5Z8LGFqPHYmH$c8e0c3d8a5f5e9c8b0f1e3d7a9c6b4f2e1d8a7b5c3f0e2d9a8b6c4f1e3d7a9c5b2f0e1d8a7b6c3f2e0d9a8b5c4f1e3d7')
+}
+
+# Payment/Rechnungs-Konfiguration
+PAYEE_CONFIG = {
+    'legal_name': os.environ.get('PAYEE_LEGAL_NAME', ''),
+    'iban': os.environ.get('PAYEE_IBAN', ''),
+    'bank': os.environ.get('PAYEE_BANK', ''),
+    'bic': os.environ.get('PAYEE_BIC', ''),
+    'display_name': os.environ.get('PAYEE_DISPLAY_NAME', ''),
+    'address_line1': os.environ.get('PAYEE_ADDRESS_LINE1', ''),
+    'address_line2': os.environ.get('PAYEE_ADDRESS_LINE2', ''),
+    'country': os.environ.get('PAYEE_COUNTRY', 'CH')
 }
 
 @auth.verify_password
@@ -47,6 +61,185 @@ def format_date_ch(date_str):
         if len(parts) == 3:
             return f"{parts[2]}.{parts[1]}.{parts[0]}"
     return date_str
+
+def generiere_rechnungsnummer():
+    """Generiert eindeutige Rechnungsnummer im Format RE-YYYYMMDD-XXXXX"""
+    db = get_db()
+    today = datetime.now().strftime("%Y%m%d")
+
+    # Zähle Rechnungen von heute
+    count = db.execute(
+        "SELECT COUNT(*) as cnt FROM rechnungen WHERE rechnungs_nummer LIKE ?",
+        (f"RE-{today}-%",)
+    ).fetchone()['cnt']
+
+    return f"RE-{today}-{count+1:05d}"
+
+def generiere_qr_rechnung(betrag, kunde, rechnungs_nummer):
+    """Generiert Swiss QR Bill als ReportLab Drawing"""
+
+    if not PAYEE_CONFIG['iban']:
+        raise ValueError("PAYEE_IBAN nicht konfiguriert")
+
+    # Nutze strukturierte Adressfelder (neue Struktur)
+    kunde_strasse = kunde.get('strasse', '') or ''
+    kunde_hausnummer = kunde.get('hausnummer', '') or ''
+    kunde_plz = kunde.get('plz', '') or ''
+    kunde_stadt = kunde.get('stadt', '') or ''
+
+    # Vollständige Strasse für QR Bill
+    kunde_strasse_komplett = f"{kunde_strasse} {kunde_hausnummer}".strip() if kunde_strasse else ''
+
+    # Creditor (Rechnungssteller)
+    creditor_plz_ort = PAYEE_CONFIG['address_line2'].split(maxsplit=1)
+    creditor_data = {
+        'name': PAYEE_CONFIG['legal_name'],
+        'pcode': creditor_plz_ort[0] if len(creditor_plz_ort) > 0 else '8000',
+        'city': creditor_plz_ort[1] if len(creditor_plz_ort) > 1 else 'Zürich',
+        'country': PAYEE_CONFIG['country']
+    }
+
+    # Debtor (Kunde) - optional
+    debtor_data = None
+    if kunde.get('name') and kunde_plz and kunde_stadt:
+        debtor_data = {
+            'name': kunde['name'],
+            'street': kunde_strasse_komplett or None,
+            'pcode': kunde_plz,
+            'city': kunde_stadt,
+            'country': 'CH'
+        }
+
+    # QR Bill erstellen
+    bill = QRBill(
+        account=PAYEE_CONFIG['iban'],
+        creditor=creditor_data,
+        amount=f"{betrag:.2f}",
+        debtor=debtor_data,
+        additional_information=f"Rechnung Nr. {rechnungs_nummer}",
+        language='de'  # Deutsch für Schweizer Senioren
+    )
+
+    # SVG generieren und zu Drawing konvertieren
+    from tempfile import NamedTemporaryFile
+    with NamedTemporaryFile(suffix='.svg', delete=False) as tmp:
+        bill.as_svg(tmp.name)
+        drawing = svg2rlg(tmp.name)
+
+    return drawing
+
+def erstelle_rechnung_pdf(rapport, kunde, rechnungs_nummer):
+    """Erstellt vollständige Rechnung mit QR Bill für einen Rapport"""
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=2*cm,
+        leftMargin=2*cm,
+        topMargin=2*cm,
+        bottomMargin=2*cm
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # === HEADER / ABSENDER ===
+    elements.append(Paragraph(f'<b>{PAYEE_CONFIG["display_name"]}</b>', styles['Title']))
+    elements.append(Paragraph(PAYEE_CONFIG['address_line1'], styles['Normal']))
+    elements.append(Paragraph(PAYEE_CONFIG['address_line2'], styles['Normal']))
+    elements.append(Spacer(1, 1*cm))
+
+    # === KUNDE & RECHNUNG INFO ===
+    heute = format_date_ch(datetime.now().strftime('%Y-%m-%d'))
+
+    # Baue Kundenadresse aus strukturierten Feldern
+    kunde_adresse_zeilen = []
+    strasse_komplett = f"{kunde.get('strasse', '')} {kunde.get('hausnummer', '')}".strip()
+    if strasse_komplett:
+        kunde_adresse_zeilen.append(strasse_komplett)
+    plz_stadt = f"{kunde.get('plz', '')} {kunde.get('stadt', '')}".strip()
+    if plz_stadt:
+        kunde_adresse_zeilen.append(plz_stadt)
+
+    kunde_info = f"""
+    <b>{kunde['name']}</b><br/>
+    {'<br/>'.join(kunde_adresse_zeilen)}
+    """
+    rechnung_info = f"""
+    <b>Datum:</b> {heute}<br/>
+    <b>Rechnung Nr.:</b> {rechnungs_nummer}
+    """
+
+    info_table = Table([
+        [Paragraph(kunde_info, styles['Normal']),
+         Paragraph(rechnung_info, styles['Normal'])]
+    ], colWidths=[10*cm, 7*cm])
+    elements.append(info_table)
+    elements.append(Spacer(1, 1.5*cm))
+
+    # === TITEL ===
+    elements.append(Paragraph('<b>RECHNUNG</b>', styles['Heading2']))
+    elements.append(Spacer(1, 0.5*cm))
+
+    # === POSITIONEN TABELLE ===
+    data = [['Pos', 'Datum', 'Beschreibung', 'Dauer', 'Betrag (CHF)']]
+
+    # Beschreibung als Paragraph mit erhaltenen Zeilenumbrüchen
+    thema_mit_br = rapport['thema'].replace('\n', '<br/>')
+    beschreibung_para = Paragraph(thema_mit_br, styles['Normal'])
+    dauer_std = rapport['dauer_minuten'] / 60
+
+    data.append([
+        '1',
+        format_date_ch(rapport['datum']),
+        beschreibung_para,  # Paragraph statt Text für Wrapping
+        f"{rapport['dauer_minuten']} min",
+        f"{rapport['kosten']:.2f}"
+    ])
+
+    # Total Zeile (ohne HTML-Tags, Formatierung via TableStyle)
+    data.append(['', '', '', 'Total CHF:', f"{rapport['kosten']:.2f}"])
+
+    table = Table(data, colWidths=[1.5*cm, 2.5*cm, 8*cm, 2.5*cm, 2.5*cm])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('ALIGN', (4, 0), (4, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),  # Text oben ausrichten (für mehrzeilige Beschreibung)
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('GRID', (0, 0), (-1, -2), 1, colors.black),
+        ('LINEABOVE', (3, -1), (-1, -1), 2, colors.black),
+        ('FONTNAME', (3, -1), (-1, -1), 'Helvetica-Bold'),  # Total-Zeile fett
+    ]))
+
+    elements.append(table)
+    elements.append(Spacer(1, 1*cm))
+
+    # === ZAHLUNGSBEDINGUNGEN ===
+    elements.append(Paragraph('Zahlbar innert 30 Tagen', styles['Normal']))
+    elements.append(Spacer(1, 1*cm))
+
+    # === QR BILL ===
+    try:
+        qr_drawing = generiere_qr_rechnung(rapport['kosten'], kunde, rechnungs_nummer)
+        if qr_drawing:
+            # Skaliere auf passende Grösse
+            qr_drawing.width = 17*cm
+            qr_drawing.height = 10.5*cm
+            qr_drawing.scale(1, 1)
+            elements.append(qr_drawing)
+    except Exception as e:
+        error_text = f'<b style="color:red">FEHLER:</b> QR-Rechnung konnte nicht generiert werden: {str(e)}'
+        elements.append(Paragraph(error_text, styles['Normal']))
+
+    # PDF erstellen
+    doc.build(elements)
+    buffer.seek(0)
+
+    return buffer.getvalue()
 
 app.jinja_env.filters['date_ch'] = format_date_ch
 
@@ -115,11 +308,12 @@ def kunde_neu():
     if request.method == 'POST':
         db = get_db()
         db.execute(
-            'INSERT INTO kunden (name, email, telefon, adresse, it_infrastruktur, stundensatz) '
-            'VALUES (?, ?, ?, ?, ?, ?)',
+            'INSERT INTO kunden (name, email, telefon, strasse, hausnummer, plz, stadt, it_infrastruktur, stundensatz) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (request.form['name'], request.form['email'], request.form['telefon'],
-             request.form['adresse'], request.form['it_infrastruktur'], 
-             request.form.get('stundensatz', 120.0))
+             request.form.get('strasse', ''), request.form.get('hausnummer', ''),
+             request.form.get('plz', ''), request.form.get('stadt', ''),
+             request.form['it_infrastruktur'], request.form.get('stundensatz', 120.0))
         )
         db.commit()
         return redirect(url_for('kunden_liste'))
@@ -200,17 +394,18 @@ def kunde_detail(kunde_id):
 def kunde_bearbeiten(kunde_id):
     """Kunde bearbeiten"""
     db = get_db()
-    
+
     if request.method == 'POST':
         db.execute(
-            'UPDATE kunden SET name=?, email=?, telefon=?, adresse=?, it_infrastruktur=?, stundensatz=? WHERE id=?',
+            'UPDATE kunden SET name=?, email=?, telefon=?, strasse=?, hausnummer=?, plz=?, stadt=?, it_infrastruktur=?, stundensatz=? WHERE id=?',
             (request.form['name'], request.form['email'], request.form['telefon'],
-             request.form['adresse'], request.form['it_infrastruktur'],
-             request.form.get('stundensatz', 120.0), kunde_id)
+             request.form.get('strasse', ''), request.form.get('hausnummer', ''),
+             request.form.get('plz', ''), request.form.get('stadt', ''),
+             request.form['it_infrastruktur'], request.form.get('stundensatz', 120.0), kunde_id)
         )
         db.commit()
         return redirect(url_for('kunde_detail', kunde_id=kunde_id))
-    
+
     kunde = db.execute('SELECT * FROM kunden WHERE id = ?', (kunde_id,)).fetchone()
     return render_template('kunde_form.html', kunde=kunde, edit_mode=True)
 
@@ -424,6 +619,76 @@ def export_pdf():
     response = make_response(buffer.getvalue())
     response.headers['Content-Type'] = 'application/pdf'
     response.headers['Content-Disposition'] = f'attachment; filename=rapporte_{datetime.now().strftime("%Y%m%d")}.pdf'
+    return response
+
+@app.route('/rechnung/rapport/<int:rapport_id>')
+@auth.login_required
+def rechnung_einzeln(rapport_id):
+    """Erstellt Rechnung für einzelnen Rapport"""
+    db = get_db()
+
+    # Lade Rapport mit Kundendaten
+    row = db.execute('''
+        SELECT r.*, k.name as kunde_name, k.email, k.telefon, k.adresse,
+               k.strasse, k.hausnummer, k.plz, k.stadt,
+               k.it_infrastruktur, k.stundensatz
+        FROM rapporte r
+        JOIN kunden k ON r.kunde_id = k.id
+        WHERE r.id = ?
+    ''', (rapport_id,)).fetchone()
+
+    if not row:
+        return "Rapport nicht gefunden", 404
+
+    # Konvertiere zu Dicts für einfacheren Zugriff
+    rapport = {
+        'id': row['id'],
+        'kunde_id': row['kunde_id'],
+        'datum': row['datum'],
+        'dauer_minuten': row['dauer_minuten'],
+        'thema': row['thema'],
+        'kosten': row['kosten'],
+        'bezahlt': row['bezahlt'],
+        'zahlungsart': row['zahlungsart']
+    }
+    kunde = {
+        'name': row['kunde_name'],
+        'email': row['email'],
+        'adresse': row['adresse'],  # Fallback für alte Daten
+        'strasse': row['strasse'],
+        'hausnummer': row['hausnummer'],
+        'plz': row['plz'],
+        'stadt': row['stadt']
+    }
+
+    # Validierung
+    if not PAYEE_CONFIG['iban']:
+        return "Fehler: IBAN nicht konfiguriert. Bitte PAYEE_IBAN in docker-compose.yml setzen.", 500
+
+    if not rapport['kosten'] or rapport['kosten'] <= 0:
+        return "Fehler: Rapport hat keinen gültigen Betrag.", 400
+
+    # Generiere Rechnungsnummer
+    rechnungs_nummer = generiere_rechnungsnummer()
+
+    # Speichere Rechnung in DB
+    db.execute(
+        'INSERT INTO rechnungen (rechnungs_nummer, kunde_id, betrag, rapport_ids) VALUES (?, ?, ?, ?)',
+        (rechnungs_nummer, rapport['kunde_id'], rapport['kosten'], str(rapport_id))
+    )
+    db.commit()
+
+    # Generiere PDF
+    try:
+        pdf_bytes = erstelle_rechnung_pdf(rapport, kunde, rechnungs_nummer)
+    except Exception as e:
+        return f"Fehler beim Erstellen der Rechnung: {str(e)}", 500
+
+    # Rückgabe als Download
+    response = make_response(pdf_bytes)
+    response.headers['Content-Type'] = 'application/pdf'
+    response.headers['Content-Disposition'] = f'attachment; filename=Rechnung_{rechnungs_nummer}.pdf'
+
     return response
 
 @app.teardown_appcontext

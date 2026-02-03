@@ -23,6 +23,10 @@ def init_db():
             email TEXT,
             telefon TEXT,
             adresse TEXT,
+            strasse TEXT,
+            hausnummer TEXT,
+            plz TEXT,
+            stadt TEXT,
             it_infrastruktur TEXT,
             stundensatz REAL DEFAULT 120.0,
             erstellt_am TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -58,5 +62,18 @@ def init_db():
             FOREIGN KEY (kunde_id) REFERENCES kunden (id)
         )
     ''')
-    
+
+    # Rechnungen Tabelle
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS rechnungen (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rechnungs_nummer TEXT UNIQUE NOT NULL,
+            kunde_id INTEGER NOT NULL,
+            erstellt_am TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            betrag REAL NOT NULL,
+            rapport_ids TEXT NOT NULL,
+            FOREIGN KEY (kunde_id) REFERENCES kunden (id)
+        )
+    ''')
+
     db.commit()
