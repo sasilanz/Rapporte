@@ -21,8 +21,8 @@ services:
       - PAYEE_COUNTRY=${PAYEE_COUNTRY:-CH}
     restart: unless-stopped
     networks:
-      - dieti-it
+      - dieti-it_app
 
 networks:
-  dieti-it:
+  dieti-it_app:
     external: true
