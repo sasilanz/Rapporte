@@ -197,8 +197,8 @@ def erstelle_konsolidierte_rechnung_pdf(rapporte, kunde, rechnungs_nummer):
         data = [['Pos', 'Datum', 'Beschreibung', 'Dauer', 'Betrag (CHF)']]
         pos = 1
         for r in offene:
-            thema_kurz = r['thema'][:50] + '...' if len(r['thema']) > 50 else r['thema']
-            thema_para = Paragraph(thema_kurz.replace('\n', '<br/>'), styles['Normal'])
+            thema_mit_br = r['thema'].replace('\n', '<br/>')
+            thema_para = Paragraph(thema_mit_br, styles['Normal'])
             data.append([
                 str(pos),
                 format_date_ch(r['datum']),
@@ -235,8 +235,8 @@ def erstelle_konsolidierte_rechnung_pdf(rapporte, kunde, rechnungs_nummer):
         data = [['Pos', 'Datum', 'Beschreibung', 'Zahlungsart', 'Betrag (CHF)']]
         pos = 1
         for r in bezahlte:
-            thema_kurz = r['thema'][:40] + '...' if len(r['thema']) > 40 else r['thema']
-            thema_para = Paragraph(thema_kurz.replace('\n', '<br/>'), styles['Normal'])
+            thema_mit_br = r['thema'].replace('\n', '<br/>')
+            thema_para = Paragraph(thema_mit_br, styles['Normal'])
             data.append([
                 str(pos),
                 format_date_ch(r['datum']),
