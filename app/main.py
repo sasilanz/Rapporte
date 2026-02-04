@@ -225,7 +225,7 @@ def erstelle_konsolidierte_rechnung_pdf(rapporte, kunde, rechnungs_nummer):
             ('FONTNAME', (3, -1), (-1, -1), 'Helvetica-Bold'),
         ]))
         elements.append(table)
-        elements.append(Spacer(1, 1*cm))
+        elements.append(Spacer(1, 0.5*cm))
 
     # === BEREITS BEZAHLTE POSITIONEN ===
     if bezahlte:
@@ -263,7 +263,7 @@ def erstelle_konsolidierte_rechnung_pdf(rapporte, kunde, rechnungs_nummer):
             ('FONTNAME', (3, -1), (-1, -1), 'Helvetica-Bold'),
         ]))
         elements.append(table)
-        elements.append(Spacer(1, 1*cm))
+        elements.append(Spacer(1, 0.5*cm))
 
     # === ZUSAMMENFASSUNG ===
     elements.append(Paragraph('<b>Zusammenfassung</b>', styles['Heading3']))
@@ -280,12 +280,12 @@ def erstelle_konsolidierte_rechnung_pdf(rapporte, kunde, rechnungs_nummer):
         ('TOPPADDING', (0, -1), (-1, -1), 8),
     ]))
     elements.append(zusammenfassung_table)
-    elements.append(Spacer(1, 1*cm))
+    elements.append(Spacer(1, 0.5*cm))
 
     # === QR BILL (nur wenn offene Beträge) ===
     if total_offen > 0:
         elements.append(Paragraph('Zahlbar innert 30 Tagen', styles['Normal']))
-        elements.append(Spacer(1, 1*cm))
+        elements.append(Spacer(1, 0.5*cm))
 
         try:
             qr_drawing = generiere_qr_rechnung(total_offen, kunde, rechnungs_nummer)
@@ -298,8 +298,7 @@ def erstelle_konsolidierte_rechnung_pdf(rapporte, kunde, rechnungs_nummer):
             error_text = f'<b style="color:red">FEHLER:</b> QR-Rechnung konnte nicht generiert werden: {str(e)}'
             elements.append(Paragraph(error_text, styles['Normal']))
     else:
-        elements.append(Paragraph('<b style="color:green;">✓ ALLE POSITIONEN BEZAHLT</b>', styles['Heading2']))
-        elements.append(Spacer(1, 0.5*cm))
+        elements.append(Paragraph('<b style="color:green;">✓ ALLE POSITIONEN BEZAHLT</b>', styles['Normal']))
         elements.append(Paragraph('Vielen Dank für Ihr Vertrauen!', styles['Normal']))
 
     # PDF erstellen
