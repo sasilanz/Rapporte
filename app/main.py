@@ -280,7 +280,7 @@ def erstelle_konsolidierte_rechnung_pdf(rapporte, kunde, rechnungs_nummer):
         ('TOPPADDING', (0, -1), (-1, -1), 8),
     ]))
     elements.append(zusammenfassung_table)
-    elements.append(Spacer(1, 0.5*cm))
+    elements.append(Spacer(1, 1*cm))
 
     # === QR BILL (nur wenn offene Beträge) ===
     if total_offen > 0:
