@@ -128,6 +128,187 @@ def generiere_qr_rechnung(betrag, kunde, rechnungs_nummer):
 
     return drawing
 
+def erstelle_konsolidierte_rechnung_pdf(rapporte, kunde, rechnungs_nummer):
+    """Erstellt konsolidierte Rechnung mit allen Rapporten eines Kunden"""
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=2*cm,
+        leftMargin=2*cm,
+        topMargin=2*cm,
+        bottomMargin=2*cm
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # === HEADER / ABSENDER ===
+    elements.append(Paragraph(f'<b>{PAYEE_CONFIG["display_name"]}</b>', styles['Title']))
+    elements.append(Paragraph(PAYEE_CONFIG['address_line1'], styles['Normal']))
+    elements.append(Paragraph(PAYEE_CONFIG['address_line2'], styles['Normal']))
+    elements.append(Spacer(1, 1*cm))
+
+    # === KUNDE & RECHNUNG INFO ===
+    heute = format_date_ch(datetime.now().strftime('%Y-%m-%d'))
+
+    # Baue Kundenadresse aus strukturierten Feldern
+    kunde_adresse_zeilen = []
+    strasse_komplett = f"{kunde.get('strasse', '')} {kunde.get('hausnummer', '')}".strip()
+    if strasse_komplett:
+        kunde_adresse_zeilen.append(strasse_komplett)
+    plz_stadt = f"{kunde.get('plz', '')} {kunde.get('stadt', '')}".strip()
+    if plz_stadt:
+        kunde_adresse_zeilen.append(plz_stadt)
+
+    kunde_info = f"""
+    <b>{kunde['name']}</b><br/>
+    {'<br/>'.join(kunde_adresse_zeilen)}
+    """
+    rechnung_info = f"""
+    <b>Datum:</b> {heute}<br/>
+    <b>Rechnung Nr.:</b> {rechnungs_nummer}
+    """
+
+    info_table = Table([
+        [Paragraph(kunde_info, styles['Normal']),
+         Paragraph(rechnung_info, styles['Normal'])]
+    ], colWidths=[10*cm, 7*cm])
+    elements.append(info_table)
+    elements.append(Spacer(1, 1.5*cm))
+
+    # === TITEL ===
+    elements.append(Paragraph('<b>KONSOLIDIERTE RECHNUNG</b>', styles['Heading2']))
+    elements.append(Spacer(1, 0.5*cm))
+
+    # Trenne bezahlte und offene Rapporte
+    bezahlte = [r for r in rapporte if r['bezahlt']]
+    offene = [r for r in rapporte if not r['bezahlt']]
+
+    total_bezahlt = sum(r['kosten'] or 0 for r in bezahlte)
+    total_offen = sum(r['kosten'] or 0 for r in offene)
+    total_gesamt = total_bezahlt + total_offen
+
+    # === OFFENE POSITIONEN ===
+    if offene:
+        elements.append(Paragraph('<b>Offene Positionen</b>', styles['Heading3']))
+        elements.append(Spacer(1, 0.3*cm))
+
+        data = [['Pos', 'Datum', 'Beschreibung', 'Dauer', 'Betrag (CHF)']]
+        pos = 1
+        for r in offene:
+            thema_kurz = r['thema'][:50] + '...' if len(r['thema']) > 50 else r['thema']
+            thema_para = Paragraph(thema_kurz.replace('\n', '<br/>'), styles['Normal'])
+            data.append([
+                str(pos),
+                format_date_ch(r['datum']),
+                thema_para,
+                f"{r['dauer_minuten']} min",
+                f"{r['kosten']:.2f}"
+            ])
+            pos += 1
+
+        data.append(['', '', '', 'Zwischentotal:', f"{total_offen:.2f}"])
+
+        table = Table(data, colWidths=[1.5*cm, 2.5*cm, 8*cm, 2.5*cm, 2.5*cm])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#cc0000')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (4, 0), (4, -1), 'RIGHT'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -2), 1, colors.black),
+            ('LINEABOVE', (3, -1), (-1, -1), 2, colors.black),
+            ('FONTNAME', (3, -1), (-1, -1), 'Helvetica-Bold'),
+        ]))
+        elements.append(table)
+        elements.append(Spacer(1, 1*cm))
+
+    # === BEREITS BEZAHLTE POSITIONEN ===
+    if bezahlte:
+        elements.append(Paragraph('<b>Bereits bezahlt (zur Information)</b>', styles['Heading3']))
+        elements.append(Spacer(1, 0.3*cm))
+
+        data = [['Pos', 'Datum', 'Beschreibung', 'Zahlungsart', 'Betrag (CHF)']]
+        pos = 1
+        for r in bezahlte:
+            thema_kurz = r['thema'][:40] + '...' if len(r['thema']) > 40 else r['thema']
+            thema_para = Paragraph(thema_kurz.replace('\n', '<br/>'), styles['Normal'])
+            data.append([
+                str(pos),
+                format_date_ch(r['datum']),
+                thema_para,
+                r['zahlungsart'] or '-',
+                f"{r['kosten']:.2f}"
+            ])
+            pos += 1
+
+        data.append(['', '', '', 'Zwischentotal:', f"{total_bezahlt:.2f}"])
+
+        table = Table(data, colWidths=[1.5*cm, 2.5*cm, 7*cm, 3.5*cm, 2.5*cm])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#228B22')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (4, 0), (4, -1), 'RIGHT'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -2), 1, colors.black),
+            ('LINEABOVE', (3, -1), (-1, -1), 2, colors.black),
+            ('FONTNAME', (3, -1), (-1, -1), 'Helvetica-Bold'),
+        ]))
+        elements.append(table)
+        elements.append(Spacer(1, 1*cm))
+
+    # === ZUSAMMENFASSUNG ===
+    elements.append(Paragraph('<b>Zusammenfassung</b>', styles['Heading3']))
+    zusammenfassung_data = [
+        ['Gesamtbetrag aller Leistungen:', f"CHF {total_gesamt:.2f}"],
+        ['Davon bereits bezahlt:', f"CHF {total_bezahlt:.2f}"],
+        ['Offener Betrag:', f"CHF {total_offen:.2f}"],
+    ]
+    zusammenfassung_table = Table(zusammenfassung_data, colWidths=[10*cm, 5*cm])
+    zusammenfassung_table.setStyle(TableStyle([
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black),
+        ('TOPPADDING', (0, -1), (-1, -1), 8),
+    ]))
+    elements.append(zusammenfassung_table)
+    elements.append(Spacer(1, 1*cm))
+
+    # === QR BILL (nur wenn offene Beträge) ===
+    if total_offen > 0:
+        elements.append(Paragraph('Zahlbar innert 30 Tagen', styles['Normal']))
+        elements.append(Spacer(1, 1*cm))
+
+        try:
+            qr_drawing = generiere_qr_rechnung(total_offen, kunde, rechnungs_nummer)
+            if qr_drawing:
+                qr_drawing.width = 17*cm
+                qr_drawing.height = 10.5*cm
+                qr_drawing.scale(1, 1)
+                elements.append(qr_drawing)
+        except Exception as e:
+            error_text = f'<b style="color:red">FEHLER:</b> QR-Rechnung konnte nicht generiert werden: {str(e)}'
+            elements.append(Paragraph(error_text, styles['Normal']))
+    else:
+        elements.append(Paragraph('<b style="color:green;">✓ ALLE POSITIONEN BEZAHLT</b>', styles['Heading2']))
+        elements.append(Spacer(1, 0.5*cm))
+        elements.append(Paragraph('Vielen Dank für Ihr Vertrauen!', styles['Normal']))
+
+    # PDF erstellen
+    doc.build(elements)
+    buffer.seek(0)
+
+    return buffer.getvalue()
+
+
 def erstelle_rechnung_pdf(rapport, kunde, rechnungs_nummer):
     """Erstellt vollständige Rechnung mit QR Bill für einen Rapport"""
 
@@ -629,6 +810,93 @@ def export_pdf():
     response.headers['Content-Type'] = 'application/pdf'
     response.headers['Content-Disposition'] = f'attachment; filename=rapporte_{datetime.now().strftime("%Y%m%d")}.pdf'
     return response
+
+@app.route('/rechnung/kunde/<int:kunde_id>/konsolidiert')
+@auth.login_required
+def rechnung_konsolidiert(kunde_id):
+    """Erstellt konsolidierte Rechnung für alle Rapporte eines Kunden"""
+    db = get_db()
+
+    # Optional: Datumsfilter
+    von_datum = request.args.get('von_datum', '')
+    bis_datum = request.args.get('bis_datum', '')
+
+    # Lade Kunde
+    kunde_row = db.execute('SELECT * FROM kunden WHERE id = ?', (kunde_id,)).fetchone()
+    if not kunde_row:
+        return "Kunde nicht gefunden", 404
+
+    kunde = {
+        'id': kunde_row['id'],
+        'name': kunde_row['name'],
+        'email': kunde_row['email'],
+        'strasse': kunde_row['strasse'],
+        'hausnummer': kunde_row['hausnummer'],
+        'plz': kunde_row['plz'],
+        'stadt': kunde_row['stadt']
+    }
+
+    # Lade Rapporte mit optionalem Datumsfilter
+    query = 'SELECT * FROM rapporte WHERE kunde_id = ?'
+    params = [kunde_id]
+
+    if von_datum:
+        query += ' AND datum >= ?'
+        params.append(von_datum)
+    if bis_datum:
+        query += ' AND datum <= ?'
+        params.append(bis_datum)
+
+    query += ' ORDER BY datum ASC'
+
+    rapport_rows = db.execute(query, params).fetchall()
+
+    if not rapport_rows:
+        return "Keine Rapporte für diesen Kunden im angegebenen Zeitraum gefunden", 404
+
+    rapporte = []
+    for row in rapport_rows:
+        rapporte.append({
+            'id': row['id'],
+            'datum': row['datum'],
+            'dauer_minuten': row['dauer_minuten'],
+            'thema': row['thema'],
+            'kosten': row['kosten'] or 0,
+            'bezahlt': row['bezahlt'],
+            'zahlungsart': row['zahlungsart']
+        })
+
+    # Validierung
+    if not PAYEE_CONFIG['iban']:
+        return "Fehler: IBAN nicht konfiguriert. Bitte PAYEE_IBAN in docker-compose.yml setzen.", 500
+
+    # Generiere Rechnungsnummer
+    rechnungs_nummer = generiere_rechnungsnummer()
+
+    # Berechne Gesamtbetrag (nur offene)
+    total_offen = sum(r['kosten'] for r in rapporte if not r['bezahlt'])
+
+    # Speichere Rechnung in DB
+    rapport_ids = ','.join(str(r['id']) for r in rapporte)
+    db.execute(
+        'INSERT INTO rechnungen (rechnungs_nummer, kunde_id, betrag, rapport_ids) VALUES (?, ?, ?, ?)',
+        (rechnungs_nummer, kunde_id, total_offen, rapport_ids)
+    )
+    db.commit()
+
+    # Generiere PDF
+    try:
+        pdf_bytes = erstelle_konsolidierte_rechnung_pdf(rapporte, kunde, rechnungs_nummer)
+    except Exception as e:
+        return f"Fehler beim Erstellen der Rechnung: {str(e)}", 500
+
+    # Rückgabe als Download
+    response = make_response(pdf_bytes)
+    response.headers['Content-Type'] = 'application/pdf'
+    response.headers['Content-Disposition'] = f'attachment; filename=Rechnung_Konsolidiert_{rechnungs_nummer}.pdf'
+
+    return response
+
 
 @app.route('/rechnung/rapport/<int:rapport_id>')
 @auth.login_required

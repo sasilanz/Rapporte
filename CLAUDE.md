@@ -45,17 +45,25 @@ python3 generate_password.py "new_password"  # Generate hash for docker-compose.
 
 ```
 app/
-├── main.py          # Flask routes, auth, business logic (~395 lines)
+├── main.py          # Flask routes, auth, business logic (~980 lines)
 ├── database.py      # SQLite schema and connection (dict row factory)
 └── templates/       # Jinja2 templates with embedded CSS
     ├── base.html    # Master template with navigation and styles
     └── ...          # Feature-specific templates
 ```
 
-### Database Schema (3 tables)
-- **kunden**: Customers (name, email, telefon, adresse, it_infrastruktur, stundensatz)
-- **login_daten**: Device credentials per customer (geraet_typ, username, passwort)
+### Database Schema (4 tables)
+- **kunden**: Customers (name, email, telefon, strasse, hausnummer, plz, stadt, it_infrastruktur, stundensatz)
+- **login_daten**: Device credentials per customer (geraet_typ, beschreibung, username, passwort)
 - **rapporte**: Support reports (datum, dauer_minuten, thema, kosten, bezahlt, zahlungsart)
+- **rechnungen**: Generated invoices (rechnungs_nummer, kunde_id, betrag, rapport_ids)
+
+### Invoice Features
+- **Single invoice**: `/rechnung/rapport/<id>` - Invoice for single report with Swiss QR Bill
+- **Consolidated invoice**: `/rechnung/kunde/<id>/konsolidiert` - Combined invoice for all customer reports
+  - Shows paid items (green) separately from open items (red)
+  - Swiss QR Bill only for open amount
+  - Optional date filters via `?von_datum=YYYY-MM-DD&bis_datum=YYYY-MM-DD`
 
 ### Key Patterns
 - All routes protected with `@auth.login_required`

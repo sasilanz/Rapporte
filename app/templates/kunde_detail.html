@@ -56,6 +56,17 @@
 <div class="card">
     <h3>Rapporte</h3>
     {% if rapporte %}
+    <div style="margin-bottom: 1rem;">
+        <a href="/rechnung/kunde/{{ kunde.id }}/konsolidiert" class="btn btn-success">📄 Konsolidierte Rechnung erstellen</a>
+        <details style="margin-top: 0.5rem;">
+            <summary style="cursor: pointer; color: #666;">Mit Datumsfilter</summary>
+            <form action="/rechnung/kunde/{{ kunde.id }}/konsolidiert" method="GET" style="margin-top: 0.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+                <label>Von: <input type="date" name="von_datum"></label>
+                <label>Bis: <input type="date" name="bis_datum"></label>
+                <button type="submit" class="btn btn-success">📄 Rechnung erstellen</button>
+            </form>
+        </details>
+    </div>
     <table>
         <thead>
             <tr>
